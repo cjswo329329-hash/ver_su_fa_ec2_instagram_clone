@@ -85,7 +85,7 @@ export const ExplorePage = () => {
     }
   }, [hasMore, loadingMore, loading, exploreItems.length, searchQuery]);
 
-  // Observer for explore sentinel
+  // Observer for explore sentinel (1200px 사전 로딩으로 무한 스크롤 멈춤 현상 제거)
   useEffect(() => {
     const sentinel = exploreSentinelRef.current;
     if (!sentinel) return;
@@ -94,7 +94,7 @@ export const ExplorePage = () => {
       if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
         loadMoreExplore();
       }
-    }, { rootMargin: '350px' });
+    }, { rootMargin: '1200px' });
 
     observer.observe(sentinel);
     return () => observer.disconnect();

@@ -53,7 +53,8 @@ export default function ReelsPage() {
 
     try {
       const currentOffset = offsetRef.current;
-      const existingIds = reels.map(r => r.id).join(',');
+      // 최근 본 40개 ID만 전달하여 URL 길이 및 파싱 오버헤드 최소화하면서 중복 방지
+      const existingIds = reels.slice(-40).map(r => r.id).join(',');
       const moreData = await reelApi.getReels({
         limit: 10,
         offset: currentOffset,
@@ -75,11 +76,11 @@ export default function ReelsPage() {
       loadingRef.current = false;
       setLoadingMore(false);
     }
-  }, [sessionSeed]);
+  }, [sessionSeed, reels]);
 
-  // Trigger loadMore when user scrolls near the end (within 5 reels of bottom)
+  // Trigger loadMore when user scrolls near the end (여유 있게 6개 전부터 사전 로딩)
   useEffect(() => {
-    if (reels.length > 0 && activeIndex >= reels.length - 5 && !loadingMore) {
+    if (reels.length > 0 && activeIndex >= reels.length - 6 && !loadingMore) {
       loadMoreReels();
     }
   }, [activeIndex, reels.length, loadingMore, loadMoreReels]);

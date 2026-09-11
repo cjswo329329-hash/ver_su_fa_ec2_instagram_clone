@@ -1,7 +1,7 @@
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.post import Post, PostMedia
 from app.models.user import User
@@ -16,6 +16,15 @@ from app.schemas.common import PaginatedResponse
 from app.core.deps import get_current_user, get_optional_current_user
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
+
+# 재사용 가능한 Post Eager Loading 옵션 세트 (N+1 쿼리 원천 방지)
+POST_EAGER_OPTIONS = (
+    joinedload(Post.author),
+    selectinload(Post.media),
+    selectinload(Post.likes),
+    selectinload(Post.bookmarks),
+    selectinload(Post.comments).joinedload(Comment.author),
+)
 
 def format_time_ago(dt: datetime) -> str:
     now = datetime.utcnow()
@@ -37,7 +46,12 @@ def format_time_ago(dt: datetime) -> str:
         return f"{int(weeks)}주 전"
     return f"{int(days // 365)}년 전"
 
-def serialize_post(post: Post, current_user: Optional[User] = None, db: Optional[Session] = None) -> PostResponse:
+def serialize_post(
+    post: Post,
+    current_user: Optional[User] = None,
+    db: Optional[Session] = None,
+    following_ids: Optional[set] = None
+) -> PostResponse:
     is_liked = False
     is_bookmarked = False
     if current_user:
@@ -45,13 +59,16 @@ def serialize_post(post: Post, current_user: Optional[User] = None, db: Optional
         is_bookmarked = any(b.user_id == current_user.id for b in post.bookmarks)
 
     author_is_following = False
-    if current_user and db and post.user_id != current_user.id:
-        follow = db.query(Follow).filter(
-            Follow.follower_id == current_user.id,
-            Follow.following_id == post.user_id,
-            Follow.status == "accepted"
-        ).first()
-        author_is_following = bool(follow)
+    if current_user and post.user_id != current_user.id:
+        if following_ids is not None:
+            author_is_following = post.user_id in following_ids
+        elif db:
+            follow = db.query(Follow).filter(
+                Follow.follower_id == current_user.id,
+                Follow.following_id == post.user_id,
+                Follow.status == "accepted"
+            ).first()
+            author_is_following = bool(follow)
 
     author_data = UserSimple(
         id=post.author.id,
@@ -104,18 +121,22 @@ def get_feed(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
+    returned_posts = []
+    has_more = False
+    next_cursor = None
+    following_author_ids = set()
+
     # 1. 로그인 사용자이고 팔로우한 유저가 있는 경우: 팔로우한 유저 + 본인 게시물 조회
     if current_user:
-        following_ids = [
-            f[0] for f in db.query(Follow.following_id).filter(
-                Follow.follower_id == current_user.id,
-                Follow.status == "accepted"
-            ).all()
-        ]
+        following_rows = db.query(Follow.following_id).filter(
+            Follow.follower_id == current_user.id,
+            Follow.status == "accepted"
+        ).all()
+        following_author_ids = {f[0] for f in following_rows}
 
-        if following_ids:
-            target_user_ids = set(following_ids + [current_user.id])
-            query = db.query(Post).filter(Post.user_id.in_(target_user_ids))
+        if following_author_ids:
+            target_user_ids = following_author_ids | {current_user.id}
+            query = db.query(Post).options(*POST_EAGER_OPTIONS).filter(Post.user_id.in_(target_user_ids))
             if cursor:
                 query = query.filter(Post.id < cursor)
 
@@ -125,23 +146,21 @@ def get_feed(
             returned_posts = posts[:limit]
             next_cursor = returned_posts[-1].id if has_more and returned_posts else None
 
-            items = [serialize_post(p, current_user, db) for p in returned_posts]
-            return PaginatedResponse(items=items, next_cursor=next_cursor, has_more=has_more)
+    # 2. 비로그인 사용자 또는 팔로우한 사람이 아직 없거나(게시물 없는 경우도 포함): 전체 공개 게시물 최신순
+    if not returned_posts:
+        query = db.query(Post).options(*POST_EAGER_OPTIONS).join(User, Post.user_id == User.id).filter(
+            User.is_private == False
+        )
 
-    # 2. 비로그인 사용자 또는 팔로우한 사람이 아직 없는 경우: 전체 공개 게시물 최신순
-    query = db.query(Post).join(User, Post.user_id == User.id).filter(
-        User.is_private == False
-    )
+        if cursor:
+            query = query.filter(Post.id < cursor)
 
-    if cursor:
-        query = query.filter(Post.id < cursor)
+        posts = query.order_by(Post.id.desc()).limit(limit + 1).all()
+        has_more = len(posts) > limit
+        returned_posts = posts[:limit]
+        next_cursor = returned_posts[-1].id if has_more and returned_posts else None
 
-    posts = query.order_by(Post.id.desc()).limit(limit + 1).all()
-    has_more = len(posts) > limit
-    returned_posts = posts[:limit]
-    next_cursor = returned_posts[-1].id if has_more and returned_posts else None
-
-    items = [serialize_post(p, current_user, db) for p in returned_posts]
+    items = [serialize_post(p, current_user, db=None, following_ids=following_author_ids) for p in returned_posts]
     return PaginatedResponse(items=items, next_cursor=next_cursor, has_more=has_more)
 
 @router.get("/explore", response_model=List[PostResponse])
@@ -150,8 +169,18 @@ def get_explore_posts(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    posts = db.query(Post).order_by(Post.id.desc()).limit(limit).all()
-    return [serialize_post(p, current_user, db) for p in posts]
+    posts = db.query(Post).options(*POST_EAGER_OPTIONS).order_by(Post.id.desc()).limit(limit).all()
+    following_author_ids = set()
+    if current_user and posts:
+        author_ids = {p.user_id for p in posts if p.user_id != current_user.id}
+        if author_ids:
+            f_rows = db.query(Follow.following_id).filter(
+                Follow.follower_id == current_user.id,
+                Follow.following_id.in_(author_ids),
+                Follow.status == "accepted"
+            ).all()
+            following_author_ids = {r[0] for r in f_rows}
+    return [serialize_post(p, current_user, db=None, following_ids=following_author_ids) for p in posts]
 
 @router.get("/{post_id}", response_model=PostResponse)
 def get_post_detail(
@@ -159,7 +188,7 @@ def get_post_detail(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    post = db.query(Post).filter(Post.id == post_id).first()
+    post = db.query(Post).options(*POST_EAGER_OPTIONS).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="게시물을 찾을 수 없습니다.")
 
@@ -214,6 +243,12 @@ def create_post(
     db.commit()
     db.refresh(post)
 
+    try:
+        from app.routers.explore import invalidate_explore_cache
+        invalidate_explore_cache()
+    except Exception:
+        pass
+
     return serialize_post(post, current_user, db)
 
 @router.delete("/{post_id}")
@@ -229,6 +264,13 @@ def delete_post(
         raise HTTPException(status_code=403, detail="작성자 또는 관리자만 삭제할 수 있습니다.")
     db.delete(post)
     db.commit()
+
+    try:
+        from app.routers.explore import invalidate_explore_cache
+        invalidate_explore_cache()
+    except Exception:
+        pass
+
     return {"message": "게시물이 삭제되었습니다."}
 
 @router.post("/{post_id}/likes")

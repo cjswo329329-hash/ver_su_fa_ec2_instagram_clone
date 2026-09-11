@@ -20,7 +20,19 @@ from app.routers.posts import format_time_ago
 
 router = APIRouter(prefix="/reels", tags=["Reels"])
 
-def serialize_reel(reel: Reel, current_user: Optional[User] = None, db: Optional[Session] = None) -> ReelResponse:
+# In-memory 캐시 for raw_meta (160종 릴스 메타데이터 60초 TTL 캐싱)
+import time
+_raw_meta_cache = None
+_raw_meta_cached_time = 0.0
+RAW_META_CACHE_TTL = 60.0
+SUPABASE_STORAGE_REELS_URL = "https://npnclxvzpeedvyogpmqw.supabase.co/storage/v1/object/public/instagram-media/reels"
+
+def serialize_reel(
+    reel: Reel,
+    current_user: Optional[User] = None,
+    db: Optional[Session] = None,
+    following_ids: Optional[set] = None
+) -> ReelResponse:
     is_liked = False
     is_bookmarked = False
     is_following = False
@@ -28,12 +40,15 @@ def serialize_reel(reel: Reel, current_user: Optional[User] = None, db: Optional
     if current_user:
         is_liked = any(like.user_id == current_user.id for like in reel.likes)
         is_bookmarked = any(b.user_id == current_user.id for b in reel.bookmarks)
-        if db and reel.user_id != current_user.id:
-            follow = db.query(Follow).filter(
-                Follow.follower_id == current_user.id,
-                Follow.following_id == reel.user_id
-            ).first()
-            is_following = bool(follow)
+        if reel.user_id != current_user.id:
+            if following_ids is not None:
+                is_following = reel.user_id in following_ids
+            elif db:
+                follow = db.query(Follow).filter(
+                    Follow.follower_id == current_user.id,
+                    Follow.following_id == reel.user_id
+                ).first()
+                is_following = bool(follow)
 
     author = ReelAuthor(
         id=reel.author.id,
@@ -57,14 +72,14 @@ def serialize_reel(reel: Reel, current_user: Optional[User] = None, db: Optional
             profile_image_url=c.author.profile_image_url,
             text=c.content,
             time_ago=format_time_ago(c.created_at),
-            likes=len(c.likes)
+            likes=0
         )
         for c in reel.comments[-10:]
     ]
 
     video_url = reel.video_url
     if not video_url or "mixkit" in video_url or "test.mp4" in video_url:
-        video_url = f"/videos/reel{((reel.id - 1) % 160) + 1}.mp4"
+        video_url = f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel.id - 1) % 160) + 1}.mp4"
 
     return ReelResponse(
         id=reel.id,
@@ -88,7 +103,7 @@ def serialize_reel(reel: Reel, current_user: Optional[User] = None, db: Optional
 
 def _normalize_video_url(raw_url: Optional[str], reel_id: int) -> str:
     if not raw_url or "mixkit" in raw_url or "test.mp4" in raw_url:
-        return f"/videos/reel{((reel_id - 1) % 160) + 1}.mp4"
+        return f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel_id - 1) % 160) + 1}.mp4"
     return raw_url
 
 def _generate_cycle(reels_meta: list, seed: int, last_video: Optional[str] = None, last_id: Optional[int] = None) -> list:
@@ -178,8 +193,17 @@ def get_reels(
 
     all_excluded = client_excluded | user_viewed_ids
 
-    # 2. 전체 릴스 메타데이터 조회
-    raw_meta = db.query(Reel.id, Reel.user_id, Reel.video_url).order_by(Reel.id.asc()).all()
+    # 2. 전체 릴스 메타데이터 조회 (인메모리 캐싱으로 중복 왕복 지연 제거)
+    global _raw_meta_cache, _raw_meta_cached_time
+    now_ts = time.time()
+    if _raw_meta_cache is not None and (now_ts - _raw_meta_cached_time < RAW_META_CACHE_TTL):
+        raw_meta = _raw_meta_cache
+    else:
+        raw_meta = db.query(Reel.id, Reel.user_id, Reel.video_url).order_by(Reel.id.asc()).all()
+        if raw_meta:
+            _raw_meta_cache = raw_meta
+            _raw_meta_cached_time = now_ts
+
     if not raw_meta:
         return []
 
@@ -218,7 +242,19 @@ def get_reels(
     reels_map = {r.id: r for r in reels_query.all()}
     reels = [reels_map[rid] for rid in page_ids if rid in reels_map]
 
-    return [serialize_reel(r, current_user, db) for r in reels]
+    # 작성자들에 대한 팔로우 여부 1회 배치 조회 (N+1 루프 쿼리 제거)
+    following_author_ids = set()
+    if current_user and reels:
+        author_ids = {r.user_id for r in reels if r.user_id != current_user.id}
+        if author_ids:
+            f_rows = db.query(Follow.following_id).filter(
+                Follow.follower_id == current_user.id,
+                Follow.following_id.in_(author_ids),
+                Follow.status == "accepted"
+            ).all()
+            following_author_ids = {row[0] for row in f_rows}
+
+    return [serialize_reel(r, current_user, db=None, following_ids=following_author_ids) for r in reels]
 
 @router.post("", response_model=ReelResponse)
 def create_reel(
@@ -226,6 +262,14 @@ def create_reel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    global _raw_meta_cache
+    _raw_meta_cache = None  # 새 릴스 등록 시 캐시 무효화
+
+    try:
+        from app.routers.explore import invalidate_explore_cache
+        invalidate_explore_cache()
+    except Exception:
+        pass
     reel = Reel(
         user_id=current_user.id,
         video_url=reel_in.video_url,

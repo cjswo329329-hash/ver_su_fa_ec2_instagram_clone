@@ -29,7 +29,7 @@ export const HomePage = () => {
           loadMoreFeed();
         }
       },
-      { rootMargin: '300px' }
+      { rootMargin: '1200px' }
     );
 
     observer.observe(sentinel);

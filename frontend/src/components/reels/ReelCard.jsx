@@ -48,13 +48,15 @@ function ReelCard({
   const [repostsCount, setRepostsCount] = useState(() => reel.repostsCount || reel.sharesCount || Math.floor(((reel.likesCount || 12) * 0.08) + 1));
   const hoverTimeoutRef = useRef(null);
 
+  const SUPABASE_STORAGE_REELS_URL = 'https://npnclxvzpeedvyogpmqw.supabase.co/storage/v1/object/public/instagram-media/reels';
+
   const getSafeVideoUrl = (rawUrl, id) => {
     const url = rawUrl || reel?.video_url || reel?.videoUrl;
-    if (url && typeof url === 'string' && (url.startsWith('/videos/') || url.startsWith('http'))) {
+    if (url && typeof url === 'string' && (url.startsWith('http') || url.startsWith('/videos/'))) {
       return url;
     }
     const idx = ((Math.abs(Number(id || reel?.id) || 1) - 1) % 160) + 1;
-    return `/videos/reel${idx}.mp4`;
+    return `${SUPABASE_STORAGE_REELS_URL}/reel${idx}.mp4`;
   };
 
   const [videoSrc, setVideoSrc] = useState(() => getSafeVideoUrl(reel?.videoUrl || reel?.video_url, reel?.id));
@@ -64,12 +66,12 @@ function ReelCard({
     setVideoSrc(getSafeVideoUrl(reel?.videoUrl || reel?.video_url, reel?.id));
   }, [reel?.id, reel?.videoUrl, reel?.video_url]);
 
-  // Video error recovery handler (160 unique reels fallback)
+  // Video error recovery handler (Supabase Storage fallback)
   const handleVideoError = () => {
     const fallbackNum = ((Math.abs(Number(reel?.id) || 1) - 1) % 160) + 1;
-    const safeFallback = `/videos/reel${fallbackNum}.mp4`;
+    const safeFallback = `${SUPABASE_STORAGE_REELS_URL}/reel${fallbackNum}.mp4`;
     if (videoSrc !== safeFallback) {
-      console.warn('Reel video failed to load, switching to fallback asset:', safeFallback);
+      console.warn('Reel video failed to load, switching to Supabase Storage asset:', safeFallback);
       setVideoSrc(safeFallback);
     }
   };
