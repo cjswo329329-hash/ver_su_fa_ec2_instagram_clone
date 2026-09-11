@@ -94,10 +94,14 @@ async def upload_media(
     with open(file_path, "wb") as buffer:
         buffer.write(content)
 
-    relative_url = f"/uploads/{cat_dir}/{unique_filename}"
+    media_url = (
+        f"{settings.PUBLIC_BASE_URL.rstrip('/')}/uploads/{cat_dir}/{unique_filename}"
+        if settings.PUBLIC_BASE_URL
+        else f"/uploads/{cat_dir}/{unique_filename}"
+    )
     media_type = "video" if ext in VIDEO_EXTENSIONS else "image"
     return {
-        "url": relative_url,
+        "url": media_url,
         "filename": unique_filename,
         "media_type": media_type
     }

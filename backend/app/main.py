@@ -30,17 +30,20 @@ Base.metadata.create_all(bind=engine)
 
 def init_db_and_admin():
     """
-    데이터베이스 스키마 마이그레이션 및 기본 관리자 계정 초기화
+    데이터베이스 스키마 마이그레이션 및 기본 관리자 계정 초기화 (SQLite / PostgreSQL 공통 호환)
     아이디: admin / 비밀번호: pass123
     """
     with engine.connect() as conn:
-        from sqlalchemy import text
-        # users 테이블에 is_admin 컬럼이 없으면 자동 추가
-        cursor = conn.execute(text("PRAGMA table_info(users)"))
-        columns = [row[1] for row in cursor.fetchall()]
-        if "is_admin" not in columns:
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
-            conn.commit()
+        from sqlalchemy import text, inspect
+        try:
+            inspector = inspect(conn)
+            if "users" in inspector.get_table_names():
+                columns = [col["name"] for col in inspector.get_columns("users")]
+                if "is_admin" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE"))
+                    conn.commit()
+        except Exception as e:
+            print(f"[WARN] 테이블 스키마 검사 중 예외: {e}")
 
     db = SessionLocal()
     try:
@@ -80,14 +83,16 @@ for category in ["posts", "reels", "profiles", "stories", "direct"]:
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Instagram Clone Backend REST API with FastAPI and SQLite (Complete)",
+    description="Instagram Clone Backend REST API with FastAPI, Supabase, and EC2",
     version="1.0.0",
 )
 
-# CORS 설정 (개발 환경 프론트엔드 연동)
+# CORS 설정 (로컬 개발 환경 및 Vercel 배포 도메인 연동 지원)
+cors_origins = list(settings.BACKEND_CORS_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
+    allow_origin_regex=r"https?://.*",  # Vercel 배포 URL(*.vercel.app) 및 모든 클라이언트 원격 연동 지원
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
