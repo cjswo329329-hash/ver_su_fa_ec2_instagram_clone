@@ -79,7 +79,7 @@ def serialize_reel(
 
     video_url = reel.video_url
     if not video_url or "mixkit" in video_url or "test.mp4" in video_url:
-        video_url = f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel.id - 1) % 160) + 1}.mp4"
+        video_url = f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel.id - 1) % 49) + 1}.mp4"
 
     return ReelResponse(
         id=reel.id,
@@ -103,7 +103,7 @@ def serialize_reel(
 
 def _normalize_video_url(raw_url: Optional[str], reel_id: int) -> str:
     if not raw_url or "mixkit" in raw_url or "test.mp4" in raw_url:
-        return f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel_id - 1) % 160) + 1}.mp4"
+        return f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel_id - 1) % 49) + 1}.mp4"
     return raw_url
 
 def _generate_cycle(reels_meta: list, seed: int, last_video: Optional[str] = None, last_id: Optional[int] = None) -> list:

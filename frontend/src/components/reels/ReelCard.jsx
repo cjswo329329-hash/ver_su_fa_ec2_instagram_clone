@@ -55,7 +55,7 @@ function ReelCard({
     if (url && typeof url === 'string' && (url.startsWith('http') || url.startsWith('/videos/'))) {
       return url;
     }
-    const idx = ((Math.abs(Number(id || reel?.id) || 1) - 1) % 160) + 1;
+    const idx = ((Math.abs(Number(id || reel?.id) || 1) - 1) % 49) + 1;
     return `${SUPABASE_STORAGE_REELS_URL}/reel${idx}.mp4`;
   };
 
@@ -66,9 +66,9 @@ function ReelCard({
     setVideoSrc(getSafeVideoUrl(reel?.videoUrl || reel?.video_url, reel?.id));
   }, [reel?.id, reel?.videoUrl, reel?.video_url]);
 
-  // Video error recovery handler (Supabase Storage fallback)
+  // Video error recovery handler (Supabase Storage 49 real shorts fallback)
   const handleVideoError = () => {
-    const fallbackNum = ((Math.abs(Number(reel?.id) || 1) - 1) % 160) + 1;
+    const fallbackNum = ((Math.abs(Number(reel?.id) || 1) - 1) % 49) + 1;
     const safeFallback = `${SUPABASE_STORAGE_REELS_URL}/reel${fallbackNum}.mp4`;
     if (videoSrc !== safeFallback) {
       console.warn('Reel video failed to load, switching to Supabase Storage asset:', safeFallback);
