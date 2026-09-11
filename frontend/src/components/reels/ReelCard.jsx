@@ -48,27 +48,13 @@ function ReelCard({
   const [repostsCount, setRepostsCount] = useState(() => reel.repostsCount || reel.sharesCount || Math.floor(((reel.likesCount || 12) * 0.08) + 1));
   const hoverTimeoutRef = useRef(null);
 
-  // Fallback video assets list (local Vite public assets, 10 distinct videos)
-  const FALLBACK_VIDEOS = [
-    '/videos/reel1.mp4',
-    '/videos/reel2.mp4',
-    '/videos/reel3.mp4',
-    '/videos/reel4.mp4',
-    '/videos/reel5.mp4',
-    '/videos/reel6.mp4',
-    '/videos/reel7.mp4',
-    '/videos/reel8.mp4',
-    '/videos/reel9.mp4',
-    '/videos/reel10.mp4',
-  ];
-
   const getSafeVideoUrl = (rawUrl, id) => {
     const url = rawUrl || reel?.video_url || reel?.videoUrl;
-    if (!url || typeof url !== 'string' || url.includes('mixkit') || url.includes('test.mp4')) {
-      const idx = Math.abs((Number(id || reel?.id) || 1) % FALLBACK_VIDEOS.length);
-      return FALLBACK_VIDEOS[idx];
+    if (url && typeof url === 'string' && (url.startsWith('/videos/') || url.startsWith('http'))) {
+      return url;
     }
-    return url;
+    const idx = ((Math.abs(Number(id || reel?.id) || 1) - 1) % 160) + 1;
+    return `/videos/reel${idx}.mp4`;
   };
 
   const [videoSrc, setVideoSrc] = useState(() => getSafeVideoUrl(reel?.videoUrl || reel?.video_url, reel?.id));
@@ -78,10 +64,10 @@ function ReelCard({
     setVideoSrc(getSafeVideoUrl(reel?.videoUrl || reel?.video_url, reel?.id));
   }, [reel?.id, reel?.videoUrl, reel?.video_url]);
 
-  // Video error recovery handler
+  // Video error recovery handler (160 unique reels fallback)
   const handleVideoError = () => {
-    const fallbackIdx = Math.abs((Number(reel?.id) || 1) % FALLBACK_VIDEOS.length);
-    const safeFallback = FALLBACK_VIDEOS[fallbackIdx];
+    const fallbackNum = ((Math.abs(Number(reel?.id) || 1) - 1) % 160) + 1;
+    const safeFallback = `/videos/reel${fallbackNum}.mp4`;
     if (videoSrc !== safeFallback) {
       console.warn('Reel video failed to load, switching to fallback asset:', safeFallback);
       setVideoSrc(safeFallback);
