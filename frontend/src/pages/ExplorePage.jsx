@@ -198,51 +198,6 @@ export const ExplorePage = () => {
                   className="explore-card-img"
                 />
 
-                {/* Top-Right Video / Reels Badge */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '12px',
-                    right: '12px',
-                    color: '#ffffff',
-                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))',
-                    pointerEvents: 'none',
-                    zIndex: 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="#ffffff">
-                    <path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-9 11V9l6 3-6 3z" />
-                  </svg>
-                </div>
-
-                {/* Top Title Overlay Banner (matches screenshot) */}
-                {post.title && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      padding: '14px 16px 28px 16px',
-                      background: 'linear-gradient(to bottom, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0) 100%)',
-                      color: '#ffffff',
-                      fontSize: '14px',
-                      fontWeight: 700,
-                      lineHeight: 1.3,
-                      letterSpacing: '-0.2px',
-                      zIndex: 1,
-                      pointerEvents: 'none',
-                      textShadow: '0 1px 3px rgba(0,0,0,0.8)',
-                      maxWidth: '84%',
-                      wordBreak: 'keep-all',
-                    }}
-                  >
-                    {post.title}
-                  </div>
-                )}
 
                 {/* Hover Overlay with Likes and Comments */}
                 <div
