@@ -11,6 +11,7 @@ class Post(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     caption: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -20,9 +21,11 @@ class Post(Base):
     comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
     likes = relationship("Like", back_populates="post", cascade="all, delete-orphan")
     bookmarks = relationship("Bookmark", back_populates="post", cascade="all, delete-orphan")
+    content_views = relationship("ContentView", back_populates="post", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_posts_user_created", "user_id", "created_at"),
+        Index("idx_posts_category", "category"),
     )
 
 class PostMedia(Base):

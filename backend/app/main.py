@@ -23,6 +23,7 @@ from app.routers import (
     notifications_router,
     uploads_router,
     admin_router,
+    views_router,
 )
 
 # 데이터베이스 테이블 자동 생성
@@ -37,10 +38,26 @@ def init_db_and_admin():
         from sqlalchemy import text, inspect
         try:
             inspector = inspect(conn)
-            if "users" in inspector.get_table_names():
+            table_names = inspector.get_table_names()
+            if "users" in table_names:
                 columns = [col["name"] for col in inspector.get_columns("users")]
                 if "is_admin" not in columns:
                     conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE"))
+                    conn.commit()
+
+            if "posts" in table_names:
+                p_columns = [col["name"] for col in inspector.get_columns("posts")]
+                if "category" not in p_columns:
+                    conn.execute(text("ALTER TABLE posts ADD COLUMN category VARCHAR(50)"))
+                    conn.commit()
+
+            if "reels" in table_names:
+                r_columns = [col["name"] for col in inspector.get_columns("reels")]
+                if "category" not in r_columns:
+                    conn.execute(text("ALTER TABLE reels ADD COLUMN category VARCHAR(50)"))
+                    conn.commit()
+                if "duration_ms" not in r_columns:
+                    conn.execute(text("ALTER TABLE reels ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 15000"))
                     conn.commit()
         except Exception as e:
             print(f"[WARN] 테이블 스키마 검사 중 예외: {e}")
@@ -133,6 +150,7 @@ app.include_router(follows_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(uploads_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(views_router, prefix="/api")
 
 @app.get("/")
 def root():

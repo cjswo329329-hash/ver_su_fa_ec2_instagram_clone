@@ -8,6 +8,7 @@ from app.models.bookmark import Bookmark
 from app.models.story import Story, StoryView
 from app.models.direct import Conversation, Message
 from app.models.notification import Notification
+from app.models.content_view import ContentView
 
 __all__ = [
     "User",
@@ -23,4 +24,5 @@ __all__ = [
     "Conversation",
     "Message",
     "Notification",
+    "ContentView",
 ]

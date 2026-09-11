@@ -11,6 +11,7 @@ from app.routers.follows import router as follows_router
 from app.routers.notifications import router as notifications_router
 from app.routers.uploads import router as uploads_router
 from app.routers.admin import router as admin_router
+from app.routers.views import router as views_router
 
 __all__ = [
     "auth_router",
@@ -26,4 +27,5 @@ __all__ = [
     "notifications_router",
     "uploads_router",
     "admin_router",
+    "views_router",
 ]

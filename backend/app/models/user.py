@@ -30,5 +30,6 @@ class User(Base):
     bookmarks = relationship("Bookmark", back_populates="user", cascade="all, delete-orphan")
     stories = relationship("Story", back_populates="user", cascade="all, delete-orphan")
     story_views = relationship("StoryView", back_populates="user", cascade="all, delete-orphan")
+    content_views = relationship("ContentView", back_populates="user", cascade="all, delete-orphan")
     followers = relationship("Follow", foreign_keys="Follow.following_id", back_populates="following", cascade="all, delete-orphan")
     following = relationship("Follow", foreign_keys="Follow.follower_id", back_populates="follower", cascade="all, delete-orphan")

@@ -21,11 +21,13 @@ class MediaResponse(BaseModel):
 class PostCreate(BaseModel):
     caption: Optional[str] = None
     location: Optional[str] = None
+    category: Optional[str] = None
     media_urls: List[str]
 
 class PostUpdate(BaseModel):
     caption: Optional[str] = None
     location: Optional[str] = None
+    category: Optional[str] = None
 
 class CommentSimple(BaseModel):
     id: int
@@ -45,6 +47,7 @@ class PostResponse(BaseModel):
     id: int
     caption: Optional[str] = None
     location: Optional[str] = None
+    category: Optional[str] = None
     created_at: datetime
     author: UserSimple
     media: List[MediaResponse]

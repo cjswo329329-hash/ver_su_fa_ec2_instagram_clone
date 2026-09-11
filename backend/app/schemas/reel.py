@@ -43,6 +43,8 @@ class ReelResponse(BaseModel):
     author: ReelAuthor
     tagged_user: Optional[str] = Field(None, serialization_alias="taggedUser")
     caption: Optional[str] = None
+    category: Optional[str] = None
+    duration_ms: int = Field(15000, serialization_alias="durationMs")
     audio: Optional[ReelAudio] = None
     likes_count: int = Field(0, serialization_alias="likesCount")
     is_liked: bool = Field(False, serialization_alias="isLiked")
@@ -61,6 +63,8 @@ class ReelCreate(BaseModel):
     video_url: str
     poster_url: Optional[str] = None
     caption: Optional[str] = None
+    category: Optional[str] = None
+    duration_ms: int = Field(15000, serialization_alias="durationMs")
     tagged_user: Optional[str] = None
     audio_title: str
     audio_cover_url: Optional[str] = None

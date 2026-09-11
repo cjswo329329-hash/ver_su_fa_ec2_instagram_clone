@@ -77,6 +77,7 @@ def serialize_post(post: Post, current_user: Optional[User] = None, db: Optional
         id=post.id,
         caption=post.caption,
         location=post.location,
+        category=post.category,
         created_at=post.created_at,
         time_ago=format_time_ago(post.created_at),
         author=author_data,
@@ -193,7 +194,8 @@ def create_post(
     post = Post(
         user_id=current_user.id,
         caption=post_in.caption,
-        location=post_in.location
+        location=post_in.location,
+        category=post_in.category
     )
     db.add(post)
     db.commit()
