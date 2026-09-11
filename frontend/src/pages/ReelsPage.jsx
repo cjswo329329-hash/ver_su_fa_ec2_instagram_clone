@@ -53,14 +53,20 @@ export default function ReelsPage() {
 
     try {
       const currentOffset = offsetRef.current;
+      const existingIds = reels.map(r => r.id).join(',');
       const moreData = await reelApi.getReels({
-        limit: 20,
+        limit: 10,
         offset: currentOffset,
-        seed: sessionSeed
+        seed: sessionSeed,
+        exclude_ids: existingIds
       });
 
       if (moreData && moreData.length > 0) {
-        setReels((prev) => [...prev, ...moreData]);
+        setReels((prev) => {
+          const prevIdSet = new Set(prev.map(p => p.id));
+          const uniqueNew = moreData.filter(item => !prevIdSet.has(item.id));
+          return [...prev, ...uniqueNew];
+        });
         offsetRef.current = currentOffset + moreData.length;
       }
     } catch (err) {

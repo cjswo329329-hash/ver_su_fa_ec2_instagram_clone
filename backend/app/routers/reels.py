@@ -10,6 +10,7 @@ from app.models.bookmark import Bookmark
 from app.models.comment import Comment
 from app.models.follow import Follow
 from app.models.notification import Notification
+from app.models.content_view import ContentView
 from app.schemas.reel import (
     ReelResponse, ReelCreate, ReelAuthor, ReelAudio, ReelComment
 )
@@ -151,48 +152,71 @@ def _get_stream_slice(reels_meta: list, seed: int, offset: int, limit: int) -> l
 
 @router.get("", response_model=List[ReelResponse])
 def get_reels(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0),
     seed: Optional[int] = Query(None, description="Random seed for consistent shuffle"),
+    exclude_ids: Optional[str] = Query(None, description="Comma-separated IDs already seen in this session"),
     cursor: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    if seed is not None:
-        # Fetch metadata for all reels ordered by ID for determinism
-        raw_meta = db.query(Reel.id, Reel.user_id, Reel.video_url).order_by(Reel.id.asc()).all()
-        reels_meta = [(r[0], r[1], _normalize_video_url(r[2], r[0])) for r in raw_meta]
-        page_items = _get_stream_slice(reels_meta, seed=seed, offset=offset, limit=limit)
-        if not page_items:
-            return []
-        page_ids = [item[0] for item in page_items]
-        reels_query = (
-            db.query(Reel)
-            .options(
-                joinedload(Reel.author),
-                selectinload(Reel.likes),
-                selectinload(Reel.bookmarks),
-                selectinload(Reel.comments).joinedload(Comment.author),
-            )
-            .filter(Reel.id.in_(set(page_ids)))
-        )
-        reels_map = {r.id: r for r in reels_query.all()}
-        reels = [reels_map[rid] for rid in page_ids if rid in reels_map]
+    # 1. 제외할 릴스 ID 세트 (세션 exclude_ids + 로그인 계정의 시청 이력)
+    client_excluded = set()
+    if exclude_ids:
+        try:
+            client_excluded = {int(x.strip()) for x in exclude_ids.split(",") if x.strip().isdigit()}
+        except Exception:
+            client_excluded = set()
+
+    user_viewed_ids = set()
+    if current_user:
+        view_rows = db.query(ContentView.reel_id).filter(
+            ContentView.user_id == current_user.id,
+            ContentView.reel_id.isnot(None)
+        ).distinct().all()
+        user_viewed_ids = {r[0] for r in view_rows if r[0]}
+
+    all_excluded = client_excluded | user_viewed_ids
+
+    # 2. 전체 릴스 메타데이터 조회
+    raw_meta = db.query(Reel.id, Reel.user_id, Reel.video_url).order_by(Reel.id.asc()).all()
+    if not raw_meta:
+        return []
+
+    # 3. 미시청 릴스 우선 선별 (계정 기준 무중복 규칙)
+    unseen_meta = [r for r in raw_meta if r[0] not in all_excluded]
+
+    # 모든 릴스를 다 시청한 경우: 현재 화면에 떠 있는 ID만 제외하고 풀 리셋
+    if len(unseen_meta) < limit:
+        candidate_meta = [r for r in raw_meta if r[0] not in client_excluded]
+        if not candidate_meta:
+            candidate_meta = raw_meta
     else:
-        # Legacy cursor-based pagination (fallback)
-        query = (
-            db.query(Reel)
-            .options(
-                joinedload(Reel.author),
-                selectinload(Reel.likes),
-                selectinload(Reel.bookmarks),
-                selectinload(Reel.comments).joinedload(Comment.author),
-            )
-            .order_by(Reel.id.desc())
+        candidate_meta = unseen_meta
+
+    reels_meta = [(r[0], r[1], _normalize_video_url(r[2], r[0])) for r in candidate_meta]
+
+    if seed is not None:
+        page_items = _get_stream_slice(reels_meta, seed=seed, offset=offset, limit=limit)
+    else:
+        page_items = reels_meta[offset : offset + limit]
+
+    if not page_items:
+        return []
+
+    page_ids = [item[0] for item in page_items]
+    reels_query = (
+        db.query(Reel)
+        .options(
+            joinedload(Reel.author),
+            selectinload(Reel.likes),
+            selectinload(Reel.bookmarks),
+            selectinload(Reel.comments).joinedload(Comment.author),
         )
-        if cursor:
-            query = query.filter(Reel.id < cursor)
-        reels = query.limit(limit).all()
+        .filter(Reel.id.in_(set(page_ids)))
+    )
+    reels_map = {r.id: r for r in reels_query.all()}
+    reels = [reels_map[rid] for rid in page_ids if rid in reels_map]
 
     return [serialize_reel(r, current_user, db) for r in reels]
 
