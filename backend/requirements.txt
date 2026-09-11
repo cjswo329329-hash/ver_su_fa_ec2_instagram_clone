@@ -10,4 +10,5 @@ pillow>=10.2.0
 alembic>=1.13.1
 psycopg2-binary>=2.9.9
 supabase>=2.3.0
+email-validator>=2.1.0
 
