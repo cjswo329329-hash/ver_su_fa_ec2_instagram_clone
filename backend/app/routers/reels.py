@@ -1,7 +1,7 @@
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.reel import Reel
 from app.models.user import User
@@ -166,11 +166,30 @@ def get_reels(
         if not page_items:
             return []
         page_ids = [item[0] for item in page_items]
-        reels_map = {r.id: r for r in db.query(Reel).filter(Reel.id.in_(set(page_ids))).all()}
+        reels_query = (
+            db.query(Reel)
+            .options(
+                joinedload(Reel.author),
+                selectinload(Reel.likes),
+                selectinload(Reel.bookmarks),
+                selectinload(Reel.comments).joinedload(Comment.author),
+            )
+            .filter(Reel.id.in_(set(page_ids)))
+        )
+        reels_map = {r.id: r for r in reels_query.all()}
         reels = [reels_map[rid] for rid in page_ids if rid in reels_map]
     else:
         # Legacy cursor-based pagination (fallback)
-        query = db.query(Reel).order_by(Reel.id.desc())
+        query = (
+            db.query(Reel)
+            .options(
+                joinedload(Reel.author),
+                selectinload(Reel.likes),
+                selectinload(Reel.bookmarks),
+                selectinload(Reel.comments).joinedload(Comment.author),
+            )
+            .order_by(Reel.id.desc())
+        )
         if cursor:
             query = query.filter(Reel.id < cursor)
         reels = query.limit(limit).all()

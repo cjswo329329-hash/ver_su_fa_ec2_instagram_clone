@@ -15,7 +15,7 @@ export default function ReelsPage() {
   const { requireAuth } = useAuthGuard();
   // Random session seed: created once per page visit so shuffle is stable across scrolling
   const [sessionSeed] = useState(() => Math.floor(Math.random() * 1000000));
-  const [reels, setReels] = useState([]);
+  const [reels, setReels] = useState(() => initialReels || []);
   const [activeIndex, setActiveIndex] = useState(0);
   const [commentReel, setCommentReel] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -27,13 +27,18 @@ export default function ReelsPage() {
     let cancelled = false;
     const loadInitialReels = async () => {
       try {
-        const data = await reelApi.getReels({ limit: 20, offset: 0, seed: sessionSeed });
+        const data = await reelApi.getReels({ limit: 10, offset: 0, seed: sessionSeed });
         if (!cancelled && data && data.length > 0) {
           setReels(data);
           offsetRef.current = data.length;
+        } else if (!cancelled && (!reels || reels.length === 0)) {
+          setReels(initialReels);
         }
       } catch (err) {
         console.warn('Could not load reels from backend, using fallback:', err);
+        if (!cancelled && (!reels || reels.length === 0)) {
+          setReels(initialReels);
+        }
       }
     };
     loadInitialReels();
