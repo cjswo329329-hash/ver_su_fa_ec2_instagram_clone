@@ -1,7 +1,16 @@
 import axios from 'axios';
 
+const getBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  // HTTPS(Vercel) 환경에서 HTTP 직접 호출 시 브라우저 Mixed Content 차단 방지 -> Vercel 프록시(/api) 사용
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && envUrl && envUrl.startsWith('http://')) {
+    return '/api';
+  }
+  return envUrl || '/api';
+};
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: getBaseUrl(),
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
