@@ -67,7 +67,11 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 4. 백엔드 상시 실행 (백그라운드 nohup 또는 systemd)
+# 4. (필요 시) 데이터베이스 마이그레이션 적용 (Alembic)
+# 새 컬럼이나 테이블 변경이 배포된 경우에만 실행:
+python -m alembic upgrade head
+
+# 5. 백엔드 상시 실행 (백그라운드 nohup 또는 systemd)
 # 테스트 실행:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
@@ -81,9 +85,35 @@ nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
 
 ---
 
-## 4단계: 향후 추천 알고리즘 확장 방법
+## 4단계: 데이터베이스 마이그레이션(Alembic) 관리 가이드
+
+Alembic이 환경(`.env`의 `DATABASE_URL`)에 따라 **Supabase PostgreSQL** 또는 **로컬 SQLite**를 자동 감지합니다.
+
+### 📌 일상적인 명령어:
+```bash
+# 1. 현재 DB 마이그레이션 버전 확인
+python -m alembic current
+
+# 2. 모델 수정 후 새 마이그레이션 파일 자동 생성 (로컬 개발 시)
+python -m alembic revision --autogenerate -m "변경내용_설명"
+
+# 3. 최신 마이그레이션 적용
+python -m alembic upgrade head
+
+# 4. 이전 버전으로 롤백 (문제 발생 시)
+python -m alembic downgrade -1
+```
+
+### 🎯 특정 데이터베이스 직접 지정 실행:
+* **로컬 SQLite 대상**: `python -m alembic -x db=sqlite current`
+* **Supabase PostgreSQL 대상**: 기본값 (또는 `.env` 설정에 따름)
+
+---
+
+## 5단계: 향후 추천 알고리즘 확장 방법
 
 추천 알고리즘 개발 시 별도 서버를 구축할 필요 없이, EC2의 `backend` 폴더에서 바로 작업하실 수 있습니다:
 1. `backend/requirements.txt`에 추천/머신러닝 라이브러리(`scikit-learn`, `numpy` 등) 추가
 2. `backend/app/routers/reels.py` 또는 신규 라우터에 `@router.get("/recommendations")` 작성
 3. Supabase DB에서 시청/좋아요 데이터를 읽어와서 파이썬으로 가공 후 반환
+
