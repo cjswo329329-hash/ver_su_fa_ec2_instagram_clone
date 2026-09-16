@@ -9,6 +9,8 @@ from app.models.story import Story, StoryView
 from app.models.direct import Conversation, Message
 from app.models.notification import Notification
 from app.models.content_view import ContentView
+from app.models.audit_log import AdminAuditLog
+from app.models.report import Report
 
 __all__ = [
     "User",
@@ -25,4 +27,6 @@ __all__ = [
     "Message",
     "Notification",
     "ContentView",
+    "AdminAuditLog",
+    "Report",
 ]

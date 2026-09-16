@@ -24,11 +24,19 @@ class TopUserItem(BaseModel):
     posts_count: int
     followers_count: int
 
+class AdminSystemHealth(BaseModel):
+    db_type: str
+    status: str
+    active_database: str
+    is_cloud_db: bool
+    server_time: str
+
 class AdminStatsResponse(BaseModel):
     summary: AdminSummaryStats
     user_registration_trend: List[DateCount]
     post_creation_trend: List[DateCount]
     top_users: List[TopUserItem]
+    system_health: Optional[AdminSystemHealth] = None
 
 class AdminUserItem(BaseModel):
     id: int
@@ -37,6 +45,8 @@ class AdminUserItem(BaseModel):
     full_name: Optional[str] = None
     profile_image_url: Optional[str] = None
     is_admin: bool = False
+    is_suspended: bool = False
+    suspension_reason: Optional[str] = None
     is_verified: bool = False
     is_private: bool = False
     created_at: datetime
@@ -111,4 +121,39 @@ class AdminReelsResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+class SuspendUserRequest(BaseModel):
+    reason: Optional[str] = "운영 정책 위반으로 인한 이용 정지"
+
+class BulkDeletePostsRequest(BaseModel):
+    post_ids: List[int]
+
+class BulkDeleteReelsRequest(BaseModel):
+    reel_ids: List[int]
+
+class BulkSuspendUsersRequest(BaseModel):
+    user_ids: List[int]
+    reason: Optional[str] = "운영 정책 위반으로 인한 일괄 이용 정지"
+
+class AdminAuditLogItem(BaseModel):
+    id: int
+    admin_id: int
+    admin_username: str
+    action: str
+    target_type: str
+    target_id: Optional[int] = None
+    target_identifier: Optional[str] = None
+    reason: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AdminAuditLogsResponse(BaseModel):
+    items: List[AdminAuditLogItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
 

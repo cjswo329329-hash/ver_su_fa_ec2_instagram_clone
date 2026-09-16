@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Integer, String, Text, Boolean, DateTime, func
+from sqlalchemy import Integer, String, Text, Boolean, DateTime, Index, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -18,6 +18,8 @@ class User(Base):
     is_private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    suspension_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
@@ -33,3 +35,7 @@ class User(Base):
     content_views = relationship("ContentView", back_populates="user", cascade="all, delete-orphan")
     followers = relationship("Follow", foreign_keys="Follow.following_id", back_populates="following", cascade="all, delete-orphan")
     following = relationship("Follow", foreign_keys="Follow.follower_id", back_populates="follower", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_users_created", "created_at"),
+    )

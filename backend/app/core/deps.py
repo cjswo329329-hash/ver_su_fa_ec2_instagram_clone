@@ -25,6 +25,11 @@ def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session 
     user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise CredentialsException("사용자를 찾을 수 없습니다.")
+    if getattr(user, "is_suspended", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"이용이 정지된 계정입니다. (사유: {user.suspension_reason or '운영 정책 위반'})"
+        )
     return user
 
 def get_optional_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Optional[User]:

@@ -24,6 +24,7 @@ from app.routers import (
     uploads_router,
     admin_router,
     views_router,
+    reports_router,
 )
 
 # 데이터베이스 테이블 자동 생성
@@ -43,6 +44,12 @@ def init_db_and_admin():
                 columns = [col["name"] for col in inspector.get_columns("users")]
                 if "is_admin" not in columns:
                     conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE"))
+                    conn.commit()
+                if "is_suspended" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN is_suspended BOOLEAN NOT NULL DEFAULT FALSE"))
+                    conn.commit()
+                if "suspension_reason" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN suspension_reason VARCHAR(255)"))
                     conn.commit()
 
             if "posts" in table_names:
@@ -65,11 +72,12 @@ def init_db_and_admin():
     db = SessionLocal()
     try:
         admin_user = db.query(User).filter(User.username == "admin").first()
+        initial_admin_pass = getattr(settings, "INITIAL_ADMIN_PASSWORD", "pass123")
         if not admin_user:
             admin_user = User(
                 username="admin",
                 email="admin@instagram.local",
-                hashed_password=get_password_hash("pass123"),
+                hashed_password=get_password_hash(initial_admin_pass),
                 full_name="시스템 관리자",
                 bio="Instagram 시스템 최고 관리자 계정",
                 profile_image_url="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80",
@@ -81,11 +89,11 @@ def init_db_and_admin():
             db.commit()
             print("[INFO] 관리자 계정(admin)이 새로 생성되었습니다.")
         else:
-            # 관리자 권한 및 요청된 비밀번호 동기화
-            admin_user.is_admin = True
-            admin_user.hashed_password = get_password_hash("pass123")
-            db.commit()
-            print("[INFO] 관리자 계정(admin) 정보가 업데이트되었습니다.")
+            # 기존 관리자 계정은 권한만 보장하고, 비밀번호는 절대 덮어쓰지 않음 (보안 패치)
+            if not admin_user.is_admin:
+                admin_user.is_admin = True
+                db.commit()
+                print("[INFO] 관리자 계정(admin) 관리자 권한이 갱신되었습니다.")
     except Exception as e:
         print(f"[WARN] 관리자 계정 초기화 중 예외: {e}")
         db.rollback()
@@ -151,6 +159,7 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(uploads_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(views_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
 
 @app.get("/")
 def root():

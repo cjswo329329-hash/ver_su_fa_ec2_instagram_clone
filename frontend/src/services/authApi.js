@@ -38,6 +38,21 @@ export const authApi = {
     });
     return response.data;
   },
+
+  verifyAccount: async (usernameOrEmail) => {
+    const response = await api.post('/auth/verify-account', {
+      username_or_email: usernameOrEmail,
+    });
+    return response.data;
+  },
+
+  resetPassword: async (usernameOrEmail, newPassword) => {
+    const response = await api.post('/auth/reset-password', {
+      username_or_email: usernameOrEmail,
+      new_password: newPassword,
+    });
+    return response.data;
+  },
 };
 
 export default authApi;

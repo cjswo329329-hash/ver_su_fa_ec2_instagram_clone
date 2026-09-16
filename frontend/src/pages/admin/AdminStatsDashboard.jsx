@@ -24,7 +24,7 @@ export const AdminStatsDashboard = ({ stats, loading, onRefresh }) => {
     );
   }
 
-  const { summary, user_registration_trend = [], post_creation_trend = [], top_users = [] } = stats;
+  const { summary, user_registration_trend = [], post_creation_trend = [], top_users = [], system_health } = stats;
 
   // 최대값 계산 (차트 높이 정규화용)
   const maxUserCount = Math.max(...user_registration_trend.map(d => d.count), 5);
@@ -403,9 +403,20 @@ export const AdminStatsDashboard = ({ stats, loading, onRefresh }) => {
                 lineHeight: 1.5,
               }}
             >
-              <strong style={{ color: '#10b981' }}>시스템 상태 정상</strong>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                FastAPI 백엔드 및 SQLite WAL 모드가 활성화되어 안정적으로 서비스 중입니다.
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ color: '#10b981', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
+                  {system_health?.status || '시스템 가동 정상'}
+                </strong>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  {system_health?.server_time || ''}
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                엔진: <strong>{system_health?.db_type || 'FastAPI 백엔드'}</strong>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                연결 데이터베이스: {system_health?.active_database || '클라우드 DB'}
               </div>
             </div>
           </div>

@@ -24,6 +24,7 @@ class Post(Base):
     content_views = relationship("ContentView", back_populates="post", cascade="all, delete-orphan")
 
     __table_args__ = (
+        Index("idx_posts_created", "created_at"),
         Index("idx_posts_user_created", "user_id", "created_at"),
         Index("idx_posts_category", "category"),
     )

@@ -38,3 +38,11 @@ class PasswordChangeRequest(BaseModel):
             if old_pwd:
                 data["old_password"] = old_pwd
         return data
+
+class VerifyAccountRequest(BaseModel):
+    username_or_email: str
+
+class PasswordResetRequest(BaseModel):
+    username_or_email: str
+    new_password: str
+

@@ -9,10 +9,14 @@ export const LoginPage = () => {
   const location = useLocation();
   const [searchParams] = useSearchParams();
 
-  const [username, setUsername] = useState('alex_creator');
-  const [password, setPassword] = useState('aaaa1234');
+  const prefill = location.state?.prefillUsername;
+  const initialSuccess = location.state?.successMessage;
+
+  const [username, setUsername] = useState(prefill || 'alex_creator');
+  const [password, setPassword] = useState(prefill ? '' : 'aaaa1234');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successInfo, setSuccessInfo] = useState(initialSuccess || '');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -63,9 +67,28 @@ export const LoginPage = () => {
             alignItems: 'center',
           }}
         >
-          <span className="brand-logo" style={{ color: 'var(--text-primary)', marginBottom: '36px' }}>
+          <span className="brand-logo" style={{ color: 'var(--text-primary)', marginBottom: '28px' }}>
             Instagram
           </span>
+
+          {successInfo && (
+            <div
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                borderRadius: '6px',
+                color: '#10b981',
+                fontSize: '12px',
+                textAlign: 'center',
+                marginBottom: '14px',
+                lineHeight: 1.4,
+              }}
+            >
+              {successInfo}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <input
@@ -118,9 +141,18 @@ export const LoginPage = () => {
             </Button>
           </form>
 
-          <a href="#forgot" style={{ fontSize: '12px', color: 'var(--ig-link)', marginTop: '20px' }}>
+          <NavLink
+            to="/accounts/password/reset"
+            style={{
+              fontSize: '12px',
+              color: 'var(--ig-link)',
+              marginTop: '20px',
+              textDecoration: 'none',
+              cursor: 'pointer',
+            }}
+          >
             비밀번호를 잊으셨나요?
-          </a>
+          </NavLink>
         </div>
 
         {/* Signup Box */}

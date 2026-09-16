@@ -7,6 +7,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { EditProfilePage } from './pages/EditProfilePage';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { DirectPage } from './pages/DirectPage';
 import ReelsPage from './pages/ReelsPage';
@@ -32,6 +33,30 @@ export function App() {
         element={
           <PublicOnlyRoute>
             <SignupPage />
+          </PublicOnlyRoute>
+        }
+      />
+      <Route
+        path="/accounts/password/reset"
+        element={
+          <PublicOnlyRoute>
+            <ResetPasswordPage />
+          </PublicOnlyRoute>
+        }
+      />
+      <Route
+        path="/accounts/password/reset/"
+        element={
+          <PublicOnlyRoute>
+            <ResetPasswordPage />
+          </PublicOnlyRoute>
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicOnlyRoute>
+            <ResetPasswordPage />
           </PublicOnlyRoute>
         }
       />

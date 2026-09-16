@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import TokenResponse, TokenRefreshRequest, LoginRequest, PasswordChangeRequest
+from app.schemas.auth import (
+    TokenResponse,
+    TokenRefreshRequest,
+    LoginRequest,
+    PasswordChangeRequest,
+    VerifyAccountRequest,
+    PasswordResetRequest,
+)
 from app.schemas.user import UserCreate, UserSimple
 from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token
 from app.core.deps import get_current_user
@@ -46,6 +53,13 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
     ).first()
     if not user or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    if getattr(user, "is_suspended", False):
+        reason = getattr(user, "suspension_reason", None) or "운영 정책 위반"
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"이용이 정지된 계정입니다. (사유: {reason})"
+        )
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
@@ -99,3 +113,57 @@ def change_password(
     current_user.hashed_password = get_password_hash(new_pwd)
     db.commit()
     return {"message": "비밀번호가 성공적으로 변경되었습니다.", "success": True}
+
+@router.post("/verify-account")
+def verify_account(req: VerifyAccountRequest, db: Session = Depends(get_db)):
+    identifier = req.username_or_email.strip() if req.username_or_email else ""
+    if not identifier:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="사용자 이름 또는 이메일을 입력해주세요.")
+    user = db.query(User).filter(
+        (User.username == identifier) | (User.email == identifier)
+    ).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="입력하신 정보와 일치하는 계정을 찾을 수 없습니다.")
+
+    # 마스킹 이메일 생성 (예: al***@domain.com)
+    email = user.email or ""
+    if "@" in email:
+        parts = email.split("@")
+        u_part = parts[0]
+        masked_u = (u_part[:2] + "*" * max(1, len(u_part) - 2)) if len(u_part) > 2 else (u_part + "***")
+        masked_email = f"{masked_u}@{parts[1]}"
+    else:
+        masked_email = "***"
+
+    return {
+        "exists": True,
+        "username": user.username,
+        "email": masked_email,
+        "full_name": user.full_name,
+        "profile_image_url": user.profile_image_url,
+    }
+
+@router.post("/reset-password")
+def reset_password(req: PasswordResetRequest, db: Session = Depends(get_db)):
+    identifier = req.username_or_email.strip() if req.username_or_email else ""
+    new_pwd = req.new_password.strip() if req.new_password else ""
+
+    if not identifier:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="사용자 이름 또는 이메일을 입력해주세요.")
+    if len(new_pwd) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="새 비밀번호는 6자 이상이어야 합니다.")
+
+    user = db.query(User).filter(
+        (User.username == identifier) | (User.email == identifier)
+    ).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="입력하신 정보와 일치하는 계정을 찾을 수 없습니다.")
+
+    user.hashed_password = get_password_hash(new_pwd)
+    db.commit()
+    return {
+        "message": "비밀번호가 성공적으로 재설정되었습니다. 새 비밀번호로 로그인해주세요.",
+        "username": user.username,
+        "success": True,
+    }
+
