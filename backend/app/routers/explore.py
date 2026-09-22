@@ -7,28 +7,105 @@ from app.database import get_db
 from app.models.post import Post
 from app.models.reel import Reel
 from app.models.user import User
+from app.models.comment import Comment
 from app.schemas.explore import ExploreItemResponse
 from app.schemas.user import UserSimple
+from app.schemas.comment import CommentResponse, CommentReplyResponse
+from app.core.deps import get_optional_current_user
 
 router = APIRouter(prefix="/explore", tags=["Explore"])
 
-# Explore 전용 Eager Loading 옵션 (155회 쿼리를 6회 이하로 축소)
+# Explore 전용 Eager Loading 옵션 (댓글 및 작성자, 좋아요 즉시 포함)
 POST_EXPLORE_OPTIONS = (
     joinedload(Post.author),
     selectinload(Post.media),
     selectinload(Post.likes),
-    selectinload(Post.comments),
+    selectinload(Post.bookmarks),
+    selectinload(Post.comments).joinedload(Comment.author),
+    selectinload(Post.comments).selectinload(Comment.likes),
 )
 
 REEL_EXPLORE_OPTIONS = (
     joinedload(Reel.author),
     selectinload(Reel.likes),
-    selectinload(Reel.comments),
+    selectinload(Reel.bookmarks),
+    selectinload(Reel.comments).joinedload(Comment.author),
+    selectinload(Reel.comments).selectinload(Comment.likes),
 )
+
+def _format_item_comments(comments_list, current_user_id: Optional[int] = None) -> List[CommentResponse]:
+    """탐색 아이템에 포함할 댓글 및 대댓글 트리 고속 포매터"""
+    if not comments_list:
+        return []
+    root_comments = []
+    replies_map = {}
+    for c in comments_list:
+        is_liked = False
+        if current_user_id:
+            is_liked = any(like.user_id == current_user_id for like in c.likes)
+        if c.parent_id is None:
+            root_comments.append(c)
+        else:
+            if c.parent_id not in replies_map:
+                replies_map[c.parent_id] = []
+            author_data = UserSimple(
+                id=c.author.id,
+                username=c.author.username,
+                full_name=c.author.full_name,
+                profile_image_url=c.author.profile_image_url,
+                is_verified=c.author.is_verified,
+                is_admin=c.author.is_admin,
+                is_private=c.author.is_private
+            ) if c.author else None
+            replies_map[c.parent_id].append(
+                CommentReplyResponse(
+                    id=c.id,
+                    post_id=c.post_id,
+                    reel_id=c.reel_id,
+                    parent_id=c.parent_id,
+                    content=c.content,
+                    created_at=c.created_at,
+                    author=author_data,
+                    likes_count=len(c.likes),
+                    is_liked=is_liked
+                )
+            )
+
+    results = []
+    for c in root_comments:
+        is_liked = False
+        if current_user_id:
+            is_liked = any(like.user_id == current_user_id for like in c.likes)
+        c_replies = replies_map.get(c.id, [])
+        author_data = UserSimple(
+            id=c.author.id,
+            username=c.author.username,
+            full_name=c.author.full_name,
+            profile_image_url=c.author.profile_image_url,
+            is_verified=c.author.is_verified,
+            is_admin=c.author.is_admin,
+            is_private=c.author.is_private
+        ) if c.author else None
+        results.append(
+            CommentResponse(
+                id=c.id,
+                post_id=c.post_id,
+                reel_id=c.reel_id,
+                parent_id=c.parent_id,
+                content=c.content,
+                created_at=c.created_at,
+                author=author_data,
+                likes_count=len(c.likes),
+                is_liked=is_liked,
+                replies=c_replies,
+                replies_count=len(c_replies)
+            )
+        )
+    return results
 
 # In-memory TTL 캐시 (탐색 피드 빠른 연속 스크롤 시 0.001초 응답 보장)
 _explore_cache: Dict[str, Tuple[float, List[ExploreItemResponse]]] = {}
-EXPLORE_CACHE_TTL = 30.0  # 30초 유효
+EXPLORE_CACHE_TTL = 15.0  # 15초 유효
 
 def invalidate_explore_cache():
     global _explore_cache
@@ -39,11 +116,13 @@ def get_explore(
     q: Optional[str] = Query(None, description="검색 키워드"),
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user)
 ):
     # 1. 캐시 검사 (검색어가 없는 일반 탐색 스크롤 요청 시)
     is_search = bool(q and q.strip())
-    cache_key = f"exp_{offset}_{limit}"
+    uid_part = str(current_user.id) if current_user else "anon"
+    cache_key = f"exp_{offset}_{limit}_{uid_part}"
     now_ts = time.time()
 
     if not is_search and cache_key in _explore_cache:
@@ -93,6 +172,9 @@ def get_explore(
             is_admin=p.author.is_admin,
             is_private=p.author.is_private
         )
+        is_bm = any(b.user_id == current_user.id for b in p.bookmarks) if current_user else False
+        is_lk = any(l.user_id == current_user.id for l in p.likes) if current_user else False
+        post_comments = _format_item_comments(p.comments, current_user.id if current_user else None)
         post_items.append(
             ExploreItemResponse(
                 id=p.id,
@@ -101,8 +183,11 @@ def get_explore(
                 is_video=False,
                 likes_count=len(p.likes),
                 comments_count=len(p.comments),
+                is_bookmarked=is_bm,
+                is_liked=is_lk,
                 author=author_data,
-                caption=p.caption
+                caption=p.caption,
+                comments=post_comments
             )
         )
 
@@ -119,6 +204,9 @@ def get_explore(
             is_admin=r.author.is_admin,
             is_private=r.author.is_private
         )
+        is_bm = any(b.user_id == current_user.id for b in r.bookmarks) if current_user else False
+        is_lk = any(l.user_id == current_user.id for l in r.likes) if current_user else False
+        reel_comments = _format_item_comments(r.comments, current_user.id if current_user else None)
         reel_items.append(
             ExploreItemResponse(
                 id=r.id,
@@ -127,8 +215,11 @@ def get_explore(
                 is_video=True,
                 likes_count=len(r.likes),
                 comments_count=len(r.comments),
+                is_bookmarked=is_bm,
+                is_liked=is_lk,
                 author=author_data,
-                caption=r.caption
+                caption=r.caption,
+                comments=reel_comments
             )
         )
 

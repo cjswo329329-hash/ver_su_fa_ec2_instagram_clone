@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MoreHorizontal } from 'lucide-react';
 import { Avatar } from '../common/Avatar';
@@ -6,9 +6,12 @@ import { MediaCarousel } from './MediaCarousel';
 import { PostActions } from './PostActions';
 import { CommentSection } from './CommentSection';
 import { useModal } from '../../contexts/ModalContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { viewApi } from '../../services';
 
 export const PostCard = ({ post }) => {
+  const { user } = useAuth();
   const {
     toggleLikePost,
     toggleBookmarkPost,
@@ -19,7 +22,51 @@ export const PostCard = ({ post }) => {
   const { requireAuth } = useAuthGuard();
   const navigate = useNavigate();
 
+  const cardRef = useRef(null);
   const commentInputRef = useRef(null);
+  const viewRecordedRef = useRef(false);
+
+  // 3초 이상 체류 시 시청 완료 기록 (로그인 유저의 Seen Filter 연동)
+  useEffect(() => {
+    const cardEl = cardRef.current;
+    if (!cardEl || !post?.id || viewRecordedRef.current || !user) return;
+
+    let timer = null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && !viewRecordedRef.current) {
+          timer = setTimeout(async () => {
+            if (!viewRecordedRef.current) {
+              viewRecordedRef.current = true;
+              try {
+                await viewApi.recordView({
+                  postId: post.id,
+                  durationMs: 3000,
+                  completed: true,
+                  source: 'feed'
+                });
+              } catch (e) {
+                // Silently handle
+              }
+            }
+          }, 3000);
+        } else {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        }
+      },
+      { threshold: 0.5 }
+    );
+
+    observer.observe(cardEl);
+    return () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [post?.id]);
 
   const handleFocusComment = () => {
     if (commentInputRef.current) {
@@ -29,6 +76,7 @@ export const PostCard = ({ post }) => {
 
   return (
     <article
+      ref={cardRef}
       style={{
         backgroundColor: 'var(--bg-primary)',
         border: '1px solid var(--border-color)',
@@ -120,10 +168,10 @@ export const PostCard = ({ post }) => {
 
       {/* Post Actions (Like, Comment, Bookmark) */}
       <PostActions
-        isLiked={post.isLiked}
-        isBookmarked={post.isBookmarked}
-        likesCount={post.likesCount}
-        commentsCount={post.commentsCount ?? post.comments?.length ?? 0}
+        isLiked={post.isLiked ?? post.is_liked ?? false}
+        isBookmarked={post.isBookmarked ?? post.is_bookmarked ?? false}
+        likesCount={post.likesCount ?? post.likes_count ?? 0}
+        commentsCount={post.commentsCount ?? post.comments_count ?? post.comments?.length ?? 0}
         showCounts={true}
         onLike={() => requireAuth(() => toggleLikePost(post.id), { actionType: 'like' })}
         onComment={() => openPostDetail(post, { focusComment: true })}

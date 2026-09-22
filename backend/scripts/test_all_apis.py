@@ -246,6 +246,36 @@ def run_tests():
     assert r_repost.json()["reposts_count"] >= 1
     print("  ✅ 릴스 공유 및 리포스트 성공")
 
+    # 7-1. Single Reel Detail (새로 추가된 GET /api/reels/{reel_id})
+    single_reel_res = client.get(f"/api/reels/{test_reel_id}", headers=headers)
+    assert single_reel_res.status_code == 200, single_reel_res.text
+    s_reel = single_reel_res.json()
+    assert s_reel["id"] == test_reel_id
+    assert s_reel.get("isBookmarked", s_reel.get("is_bookmarked")) is True
+    print(f"  ✅ 단일 릴스 상세 조회(GET /api/reels/{test_reel_id}) 성공 및 북마크 상태 확인")
+
+    # 7-2. Saved list includes bookmarked reel
+    saved_after_reel = client.get("/api/users/saved", headers=headers)
+    assert saved_after_reel.status_code == 200, saved_after_reel.text
+    saved_items = saved_after_reel.json()
+    assert any(
+        item.get("id") == test_reel_id or
+        any(m.get("mediaType") == "video" or m.get("media_type") == "video" for m in item.get("media", []))
+        for item in saved_items
+    )
+    print(f"  ✅ 저장됨 탭에 북마크된 릴스 포함 확인 ({len(saved_items)}개 저장됨)")
+
+    # 7-3. Content Views (Seen Filter & Not Interested)
+    view_res = client.post("/api/views", headers=headers, json={
+        "reel_id": test_reel_id,
+        "duration_ms": 3500,
+        "completed": True,
+        "not_interested": False,
+        "source": "reels"
+    })
+    assert view_res.status_code in (200, 201), view_res.text
+    print("  ✅ 시청 이력(POST /api/views) 기록 성공")
+
     # 8. Explore API
     print("\n[8] Explore API 테스트")
     exp_res = client.get("/api/explore?limit=12")
@@ -333,9 +363,11 @@ def run_tests():
     assert ra_res.status_code == 200, ra_res.text
     print("  ✅ 전체 알림 일괄 읽음 처리 성공")
 
-    # 12. Uploads API
+    # 12. Uploads API (JPEG 매직 바이트 검증 통과)
     print("\n[12] Uploads API 테스트")
-    dummy_file = ("test.jpg", b"fake image bytes", "image/jpeg")
+    # 표준 JPEG SOI + JFIF 헤더
+    valid_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + b"\xff\xd9"
+    dummy_file = ("test.jpg", valid_jpeg, "image/jpeg")
     upload_res = client.post(
         "/api/uploads/media",
         files={"file": dummy_file},
@@ -348,8 +380,24 @@ def run_tests():
     assert up_data["media_type"] == "image"
     print(f"  ✅ 파일 업로드 성공: {up_data['url']}")
 
+    # 13. Reports API (일반 신고 등록)
+    print("\n[13] Reports API 테스트")
+    report_res = client.post("/api/reports", headers=headers, json={
+        "target_type": "reel",
+        "target_id": test_reel_id,
+        "reason": "자동화 테스트 신고 건입니다.",
+        "details": "테스트 상세 내용"
+    })
+    assert report_res.status_code in (201, 409), report_res.text
+    print("  ✅ 신고 등록(POST /api/reports) 성공 또는 기접수 확인")
+
+    # Clean up test reel
+    del_r = client.delete(f"/api/reels/{test_reel_id}", headers=headers)
+    assert del_r.status_code == 200, del_r.text
+    print("  ✅ 테스트 릴스 삭제 정리 성공")
+
     print("\n==================================================================")
-    print("🎉 ALL 12 API DOMAINS PASSED 100% SUCCESSFULLY!")
+    print("🎉 ALL API DOMAINS PASSED 100% SUCCESSFULLY!")
     print("==================================================================")
 
 if __name__ == "__main__":

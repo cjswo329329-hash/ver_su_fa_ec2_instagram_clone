@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Heart, MessageCircle, Copy, Play, Film, Bookmark, UserCheck, Camera } from 'lucide-react';
+import { Heart, MessageCircle, Copy, Bookmark, Camera } from 'lucide-react';
 import { useModal } from '../../contexts/ModalContext';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -36,65 +36,11 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
           >
             <Bookmark size={30} strokeWidth={1.5} color="var(--text-primary)" />
           </div>
-          <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '12px' }}>
+          <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '12px', color: 'var(--text-primary)' }}>
             저장
           </h3>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             다시 보고 싶은 사진과 동영상을 저장하세요. 저장한 콘텐츠는 회원님만 볼 수 있으며 다른 사람에게는 공개되지 않습니다.
-          </p>
-        </div>
-      );
-    }
-
-    if (tab === 'tagged') {
-      return (
-        <div style={{ textAlign: 'center', padding: '60px 20px', maxWidth: '360px', margin: '0 auto' }}>
-          <div
-            style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              border: '2px solid var(--text-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 16px',
-            }}
-          >
-            <UserCheck size={30} strokeWidth={1.5} color="var(--text-primary)" />
-          </div>
-          <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '12px' }}>
-            내가 나온 사진
-          </h3>
-          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            사람들이 회원님을 사진에 태그하면 태그된 사진이 여기에 표시됩니다.
-          </p>
-        </div>
-      );
-    }
-
-    if (tab === 'reels') {
-      return (
-        <div style={{ textAlign: 'center', padding: '60px 20px', maxWidth: '360px', margin: '0 auto' }}>
-          <div
-            style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              border: '2px solid var(--text-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 16px',
-            }}
-          >
-            <Film size={30} strokeWidth={1.5} color="var(--text-primary)" />
-          </div>
-          <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '12px' }}>
-            릴스 동영상
-          </h3>
-          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            회원님의 짧고 흥미로운 릴스 동영상을 공유해보세요.
           </p>
         </div>
       );
@@ -117,7 +63,7 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
         >
           <Camera size={30} strokeWidth={1.5} color="var(--text-primary)" />
         </div>
-        <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '12px' }}>
+        <h3 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '12px', color: 'var(--text-primary)' }}>
           사진 공유
         </h3>
         <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '16px' }}>
@@ -140,8 +86,6 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
     );
   }
 
-  const isReelsTab = tab === 'reels';
-
   return (
     <div
       style={{
@@ -153,9 +97,24 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
       className="post-grid-container"
     >
       {posts.map((post) => {
-        const coverUrl = post.media?.[0]?.mediaUrl || post.mediaUrl;
-        const isMultiple = post.media?.length > 1 || post.isMultiple;
-        const isVideo = post.isVideo || isReelsTab;
+        const coverUrl =
+          post.media?.[0]?.media_url ||
+          post.media?.[0]?.mediaUrl ||
+          post.media_url ||
+          post.mediaUrl ||
+          post.poster_url ||
+          post.posterUrl ||
+          post.video_url ||
+          post.videoUrl;
+        const isMultiple = (post.media && post.media.length > 1) || post.isMultiple;
+        const isVideo =
+          post.isVideo ||
+          post.media?.[0]?.media_type === 'video' ||
+          post.media?.[0]?.mediaType === 'video' ||
+          !!post.video_url ||
+          !!post.videoUrl;
+        const likes = post.likes_count ?? post.likesCount ?? post.likes?.length ?? 0;
+        const comments = post.comments_count ?? post.commentsCount ?? post.comments?.length ?? 0;
 
         return (
           <div
@@ -163,7 +122,7 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
             onClick={() => handlePostClick(post)}
             style={{
               position: 'relative',
-              aspectRatio: isReelsTab ? '9 / 16' : '1 / 1',
+              aspectRatio: '1 / 1',
               backgroundColor: '#1a1a1a',
               cursor: 'pointer',
               overflow: 'hidden',
@@ -184,7 +143,7 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
             />
 
             {/* Multiple media indicator */}
-            {isMultiple && !isReelsTab && (
+            {isMultiple && (
               <div
                 style={{
                   position: 'absolute',
@@ -196,43 +155,6 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
                 }}
               >
                 <Copy size={18} />
-              </div>
-            )}
-
-            {/* Reels Video indicator */}
-            {isVideo && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '10px',
-                  right: '10px',
-                  color: '#ffffff',
-                  filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))',
-                  pointerEvents: 'none',
-                }}
-              >
-                <Film size={18} />
-              </div>
-            )}
-
-            {/* Reels View count on bottom left if reels tab */}
-            {isReelsTab && (
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: '8px',
-                  left: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  color: '#ffffff',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  textShadow: '0 1px 3px rgba(0,0,0,0.8)',
-                }}
-              >
-                <Play size={12} fill="#ffffff" />
-                <span>{((post.likesCount || 1000) * 8).toLocaleString()}</span>
               </div>
             )}
 
@@ -257,11 +179,11 @@ export const PostGrid = ({ posts, tab = 'posts', isMe = true }) => {
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '16px' }}>
                 <Heart size={20} fill="#ffffff" />
-                <span>{(post.likesCount || 0).toLocaleString()}</span>
+                <span>{likes.toLocaleString()}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '16px' }}>
                 <MessageCircle size={20} fill="#ffffff" />
-                <span>{(post.commentsCount || post.comments?.length || 0).toLocaleString()}</span>
+                <span>{comments.toLocaleString()}</span>
               </div>
             </div>
           </div>

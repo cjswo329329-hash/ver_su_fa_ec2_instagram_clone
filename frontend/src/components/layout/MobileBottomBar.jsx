@@ -77,6 +77,8 @@ export const MobileBottomBar = () => {
         onClick={() => {
           if (!user) {
             navigate('/login', { state: { from: { pathname: '/reels' } } });
+          } else if (isReels) {
+            window.dispatchEvent(new CustomEvent('ig_reels_refresh'));
           } else {
             navigate('/reels');
           }

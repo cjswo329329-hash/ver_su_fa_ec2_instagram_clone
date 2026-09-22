@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { Lock, CheckCircle, Eye, EyeOff, ArrowLeft, KeyRound, AlertCircle } from 'lucide-react';
 import { Button } from '../components/common/Button';
 import { authApi } from '../services/authApi';
+import { extractErrorMessage } from '../utils/errorHandler';
 
 export const ResetPasswordPage = () => {
   const navigate = useNavigate();
@@ -40,8 +41,7 @@ export const ResetPasswordPage = () => {
       setVerifiedUser(res);
     } catch (err) {
       console.error('Verify error:', err);
-      const detail = err.response?.data?.detail;
-      setError(detail || '입력하신 정보와 일치하는 계정을 찾을 수 없습니다.');
+      setError(extractErrorMessage(err, '입력하신 정보와 일치하는 계정을 찾을 수 없습니다.'));
     } finally {
       setVerifying(false);
     }
@@ -63,12 +63,11 @@ export const ResetPasswordPage = () => {
 
     setSubmitting(true);
     try {
-      await authApi.resetPassword(verifiedUser.username, newPassword);
+      await authApi.resetPassword(verifiedUser.username, newPassword, verifiedUser.reset_token);
       setIsSuccess(true);
     } catch (err) {
       console.error('Reset error:', err);
-      const detail = err.response?.data?.detail;
-      setError(detail || '비밀번호 재설정 중 오류가 발생했습니다. 다시 시도해주세요.');
+      setError(extractErrorMessage(err, '비밀번호 재설정 중 오류가 발생했습니다. 다시 시도해주세요.'));
     } finally {
       setSubmitting(false);
     }

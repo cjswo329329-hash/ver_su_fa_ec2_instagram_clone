@@ -24,8 +24,15 @@
 2. [backend/.env](file:///d:/바이브코딩/Instagram_Vercel_Supabase_FastAPI/backend/.env) 파일의 `DATABASE_URL` 주석을 해제하고 비밀번호를 입력합니다:
    ```env
    DATABASE_URL="postgresql://postgres:내비밀번호@db.npnclxvzpeedvyogpmqw.supabase.co:5432/postgres"
+   SECRET_KEY="강력한_랜덤_시크릿키_생성_값"
+   INITIAL_ADMIN_PASSWORD="운영용_강력한_관리자_비밀번호"
    ```
    *(비밀번호에 특수문자 `@`, `#` 등이 있다면 URL 인코딩 필요. 예: `@` -> `%40')*
+
+### 🛡️ [필수 보안 조치] Supabase 보안 하드닝 (Option A 적용):
+FastAPI 백엔드 3-Tier 아키텍처에서는 외부에서 Supabase PostgREST Data API를 통해 DB를 직접 탈취하지 못하도록 반드시 차단해야 합니다:
+1. **방법 1 (대시보드)**: [Supabase Project Settings > API] 에서 **"Enable Data API"를 OFF (비활성화)**로 전환합니다.
+2. **방법 2 (SQL 스크립트)**: [Supabase SQL Editor] 에서 [`backend/scripts/supabase_security_hardening.sql`](file:///d:/바이브코딩/Instagram_Vercel_Supabase_FastAPI/backend/scripts/supabase_security_hardening.sql) 스크립트를 1회 실행하여 모든 테이블의 RLS 활성화 및 anon 공개 접근을 원천 차단합니다.
 
 ---
 

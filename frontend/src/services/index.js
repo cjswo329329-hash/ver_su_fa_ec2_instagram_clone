@@ -10,3 +10,6 @@ export { default as uploadApi } from './uploadApi';
 export { default as followApi } from './followApi';
 export { default as exploreApi } from './exploreApi';
 export { default as adminApi } from './adminApi';
+export { default as viewApi } from './viewApi';
+export { default as reportApi } from './reportApi';
+export { default as recommendationApi } from './recommendationApi';

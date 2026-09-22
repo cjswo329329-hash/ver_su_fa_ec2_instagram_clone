@@ -7,6 +7,9 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { followApi } from '../../services';
 
+// 팔로워/팔로잉 모달 0초 즉시 렌더링을 위한 모듈 레벨 인메모리 캐시
+const _followModalCache = new Map();
+
 export const FollowersModal = ({
   isOpen,
   onClose,
@@ -20,12 +23,14 @@ export const FollowersModal = ({
   const { allUsers } = useAuth();
   const navigate = useNavigate();
 
-  const [followersList, setFollowersList] = useState([]);
-  const [followingList, setFollowingList] = useState([]);
+  const cachedData = profileUser?.id ? _followModalCache.get(profileUser.id) : null;
+  const [followersList, setFollowersList] = useState(() => cachedData?.followers || []);
+  const [followingList, setFollowingList] = useState(() => cachedData?.following || []);
+  const [loading, setLoading] = useState(!cachedData);
   const [followersCount, setFollowersCount] = useState(profileUser?.followers_count || 0);
   const [followingCount, setFollowingCount] = useState(profileUser?.following_count || 0);
   const [followingMap, setFollowingMap] = useState({});
-  const [pendingRequests, setPendingRequests] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState(() => cachedData?.pendingRequests || []);
   const [processingIds, setProcessingIds] = useState(new Set());
   const [hasChanged, setHasChanged] = useState(false);
 
@@ -43,10 +48,23 @@ export const FollowersModal = ({
           setFollowingCount(profileUser.following_count);
         }
       }
+
+      // 캐시가 있으면 즉각 렌더링(0초)
+      if (profileUser?.id) {
+        const cached = _followModalCache.get(profileUser.id);
+        if (cached) {
+          setFollowersList(cached.followers || []);
+          setFollowingList(cached.following || []);
+          if (cached.pendingRequests) setPendingRequests(cached.pendingRequests);
+          setLoading(false);
+        } else {
+          setLoading(true);
+        }
+      }
     }
   }, [isOpen, initialTab, profileUser?.id]);
 
-  // Load followers and following data when modal opens
+  // Load followers and following data with tab priority & non-blocking SWR
   useEffect(() => {
     if (!isOpen || !profileUser?.id) return;
 
@@ -54,40 +72,80 @@ export const FollowersModal = ({
 
     const loadFollowData = async () => {
       try {
-        const [fllwers, fllwing] = await Promise.all([
-          followApi.getFollowers(profileUser.id),
-          followApi.getFollowing(profileUser.id)
-        ]);
-        if (isCancelled) return;
+        const uid = profileUser.id;
+        const isFollowersFirst = activeTab === 'followers';
 
-        const followers = fllwers || [];
-        const following = fllwing || [];
-        setFollowersList(followers);
-        setFollowingList(following);
+        // 1. 현재 보고 있는 탭의 데이터를 최우선 조회하여 즉시 렌더링
+        if (isFollowersFirst) {
+          const fllwers = await followApi.getFollowers(uid);
+          if (isCancelled) return;
+          const followers = fllwers || [];
+          setFollowersList(followers);
+          setFollowersCount(followers.length);
+          setLoading(false); // 현재 탭 데이터가 오는 즉시 스켈레톤 해제
 
-        // Load real follow requests if own account and private
+          // 2. 다른 탭(following)은 백그라운드로 즉시 이어서 로드
+          const fllwing = await followApi.getFollowing(uid);
+          if (isCancelled) return;
+          const following = fllwing || [];
+          setFollowingList(following);
+          setFollowingCount(following.length);
+
+          // 캐시 저장
+          _followModalCache.set(uid, {
+            followers,
+            following,
+            pendingRequests: isMe && profileUser?.is_private ? pendingRequests : [],
+            timestamp: Date.now()
+          });
+        } else {
+          const fllwing = await followApi.getFollowing(uid);
+          if (isCancelled) return;
+          const following = fllwing || [];
+          setFollowingList(following);
+          setFollowingCount(following.length);
+          setLoading(false);
+
+          const fllwers = await followApi.getFollowers(uid);
+          if (isCancelled) return;
+          const followers = fllwers || [];
+          setFollowersList(followers);
+          setFollowersCount(followers.length);
+
+          _followModalCache.set(uid, {
+            followers,
+            following,
+            pendingRequests: isMe && profileUser?.is_private ? pendingRequests : [],
+            timestamp: Date.now()
+          });
+        }
+
+        // 3. 비공개 본인 계정인 경우 팔로우 요청 조회
         if (isMe && profileUser?.is_private) {
           try {
             const reqs = await followApi.getFollowRequests();
-            if (!isCancelled) setPendingRequests(reqs || []);
+            if (!isCancelled) {
+              const pReqs = reqs || [];
+              setPendingRequests(pReqs);
+              const currentCache = _followModalCache.get(uid);
+              if (currentCache) {
+                _followModalCache.set(uid, { ...currentCache, pendingRequests: pReqs });
+              }
+            }
           } catch (err) {
             console.warn('Failed to load pending follow requests:', err);
-            if (!isCancelled) setPendingRequests([]);
           }
-        } else {
-          setPendingRequests([]);
         }
 
-        // 동기화된 카운트 설정
-        setFollowersCount(followers.length);
-        setFollowingCount(following.length);
-
         // 초기 팔로우 상태 맵 구성
+        const currentCache = _followModalCache.get(uid);
+        const curFollowing = currentCache?.following || [];
+        const curFollowers = currentCache?.followers || [];
         const initialMap = {};
-        following.forEach(u => {
+        curFollowing.forEach(u => {
           initialMap[u.id] = isMe ? true : !!(u.is_following ?? u.isFollowing);
         });
-        followers.forEach(u => {
+        curFollowers.forEach(u => {
           if (initialMap[u.id] === undefined) {
             initialMap[u.id] = !!(u.is_following ?? u.isFollowing);
           }
@@ -95,6 +153,7 @@ export const FollowersModal = ({
         setFollowingMap(initialMap);
       } catch (err) {
         if (isCancelled) return;
+        setLoading(false);
         console.error('Failed to load followers/following from backend, fallback to mock:', err);
         const fallbackFollowers = allUsers.filter(u => u.username !== profileUser?.username).slice(0, 10);
         const fallbackFollowing = allUsers.filter(u => u.username !== profileUser?.username).slice(0, 8);
@@ -110,7 +169,7 @@ export const FollowersModal = ({
     return () => {
       isCancelled = true;
     };
-  }, [isOpen, profileUser?.id, isMe, profileUser?.is_private]);
+  }, [isOpen, profileUser?.id, isMe, profileUser?.is_private, activeTab]);
 
   const handleAcceptRequest = async (reqId) => {
     if (processingIds.has(reqId)) return;
@@ -278,6 +337,15 @@ export const FollowersModal = ({
     const nextCount = Math.max(0, followersCount - 1);
     setFollowersCount(nextCount);
     setHasChanged(true);
+
+    // 캐시에서도 즉시 삭제 동기화
+    if (profileUser?.id && _followModalCache.has(profileUser.id)) {
+      const c = _followModalCache.get(profileUser.id);
+      _followModalCache.set(profileUser.id, {
+        ...c,
+        followers: (c.followers || []).filter(u => u.id !== userId)
+      });
+    }
 
     // 2. 부모(ProfileHeader)에 즉각 수치 전달
     if (onFollowChange) {
@@ -484,7 +552,59 @@ export const FollowersModal = ({
 
         {/* Users List */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 16px' }} className="no-scrollbar">
-          {filteredList.length === 0 ? (
+          {loading && currentList.length === 0 ? (
+            /* 스켈레톤 로딩 UI: 데이터 불러오는 대기 시간 동안 자연스러운 펄스 애니메이션 노출 */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '6px 0' }}>
+              {Array.from({ length: 7 }).map((_, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+                    {/* 아바타 원형 스켈레톤 */}
+                    <div
+                      style={{
+                        width: '44px',
+                        height: '44px',
+                        borderRadius: '50%',
+                        backgroundColor: 'var(--border-subtle, #262626)',
+                        animation: 'follow-skeleton-pulse 1.4s infinite ease-in-out',
+                      }}
+                    />
+                    {/* 이름/유저명 스켈레톤 바 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                      <div
+                        style={{
+                          width: `${80 + (idx % 3) * 25}px`,
+                          height: '13px',
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--border-subtle, #262626)',
+                          animation: 'follow-skeleton-pulse 1.4s infinite ease-in-out',
+                        }}
+                      />
+                      <div
+                        style={{
+                          width: `${50 + (idx % 2) * 20}px`,
+                          height: '11px',
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--border-subtle, #262626)',
+                          opacity: 0.7,
+                          animation: 'follow-skeleton-pulse 1.4s infinite ease-in-out',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {/* 우측 버튼 스켈레톤 */}
+                  <div
+                    style={{
+                      width: '68px',
+                      height: '32px',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--border-subtle, #262626)',
+                      animation: 'follow-skeleton-pulse 1.4s infinite ease-in-out',
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : filteredList.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-secondary)' }}>
               <p style={{ fontSize: '14px' }}>검색 결과가 없습니다.</p>
             </div>
@@ -603,6 +723,13 @@ export const FollowersModal = ({
           )}
         </div>
       </div>
+      <style>{`
+        @keyframes follow-skeleton-pulse {
+          0% { opacity: 0.35; }
+          50% { opacity: 0.85; }
+          100% { opacity: 0.35; }
+        }
+      `}</style>
     </Modal>
   );
 };

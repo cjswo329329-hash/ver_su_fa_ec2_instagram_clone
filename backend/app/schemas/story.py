@@ -3,6 +3,10 @@ from typing import List
 from pydantic import BaseModel, computed_field
 from app.schemas.user import UserSimple
 
+class StoryCreate(BaseModel):
+    media_url: str
+    media_type: str = "image"
+
 class StoryItemResponse(BaseModel):
     id: int
     media_url: str

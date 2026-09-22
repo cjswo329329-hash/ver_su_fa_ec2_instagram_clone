@@ -11,7 +11,7 @@ MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 
 IMAGE_EXTENSIONS = {
     ".jpg", ".jpeg", ".jfif", ".png", ".webp", ".gif",
-    ".avif", ".bmp", ".heic", ".heif", ".svg"
+    ".avif", ".bmp", ".heic", ".heif"
 }
 VIDEO_EXTENSIONS = {
     ".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv"
@@ -27,7 +27,6 @@ CONTENT_TYPE_TO_EXT = {
     "image/gif": ".gif",
     "image/avif": ".avif",
     "image/bmp": ".bmp",
-    "image/svg+xml": ".svg",
     "image/heic": ".heic",
     "image/heif": ".heif",
     "video/mp4": ".mp4",
@@ -36,6 +35,27 @@ CONTENT_TYPE_TO_EXT = {
     "video/x-msvideo": ".avi",
     "video/x-matroska": ".mkv",
 }
+
+def validate_media_signature(content: bytes, ext: str) -> bool:
+    """파일 헤더(Magic Bytes)를 검사하여 위장된 악성 파일 실행 차단"""
+    if len(content) < 8:
+        return False
+    if ext in {".jpg", ".jpeg", ".jfif"}:
+        return content.startswith(b"\xff\xd8\xff")
+    if ext == ".png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext == ".gif":
+        return content.startswith(b"GIF87a") or content.startswith(b"GIF89a")
+    if ext == ".webp":
+        return content.startswith(b"RIFF") and b"WEBP" in content[:16]
+    if ext == ".bmp":
+        return content.startswith(b"BM")
+    if ext in {".mp4", ".mov", ".m4v"}:
+        return b"ftyp" in content[:16] or content.startswith(b"\x00\x00\x00")
+    if ext in {".webm", ".mkv"}:
+        return content.startswith(b"\x1a\x45\xdf\xa3")
+    # 그 외 형식(.avif, .heic 등)은 최소 12바이트 검증 허용
+    return True
 
 @router.post("/media")
 async def upload_media(
@@ -81,6 +101,13 @@ async def upload_media(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="파일 크기는 최대 25MB까지 허용됩니다."
+        )
+
+    # 매직 바이트(Magic Bytes) 위장 검사
+    if not validate_media_signature(content, ext):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="파일 내용이 손상되었거나 확장자와 실제 파일 시그니처가 일치하지 않습니다."
         )
 
     target_dir = os.path.join(settings.UPLOAD_DIR, cat_dir)

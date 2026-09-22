@@ -13,6 +13,7 @@ from app.routers.uploads import router as uploads_router
 from app.routers.admin import router as admin_router
 from app.routers.views import router as views_router
 from app.routers.reports import router as reports_router
+from app.routers.recommendations import router as recommendations_router
 
 __all__ = [
     "auth_router",
@@ -30,4 +31,5 @@ __all__ = [
     "admin_router",
     "views_router",
     "reports_router",
+    "recommendations_router",
 ]

@@ -4,19 +4,21 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.reel import Reel
+from app.models.post import Post
 from app.models.user import User
 from app.models.like import Like
 from app.models.bookmark import Bookmark
 from app.models.comment import Comment
 from app.models.follow import Follow
-from app.models.notification import Notification
 from app.models.content_view import ContentView
 from app.schemas.reel import (
     ReelResponse, ReelCreate, ReelAuthor, ReelAudio, ReelComment
 )
 from app.schemas.comment import CommentCreate, CommentResponse, CommentReplyResponse
 from app.core.deps import get_current_user, get_optional_current_user
-from app.routers.posts import format_time_ago
+from app.core.utils import format_time_ago
+from app.services.notification_service import send_notification, cancel_notification
+from app.routers.explore import invalidate_explore_cache
 
 router = APIRouter(prefix="/reels", tags=["Reels"])
 
@@ -106,7 +108,13 @@ def _normalize_video_url(raw_url: Optional[str], reel_id: int) -> str:
         return f"{SUPABASE_STORAGE_REELS_URL}/reel{((reel_id - 1) % 49) + 1}.mp4"
     return raw_url
 
-def _generate_cycle(reels_meta: list, seed: int, last_video: Optional[str] = None, last_id: Optional[int] = None) -> list:
+def _generate_cycle(
+    reels_meta: list,
+    seed: int,
+    last_video: Optional[str] = None,
+    last_id: Optional[int] = None,
+    cat_multipliers: Optional[dict] = None
+) -> list:
     import random
     from collections import defaultdict
 
@@ -121,20 +129,41 @@ def _generate_cycle(reels_meta: list, seed: int, last_video: Optional[str] = Non
     prev_vid = last_video
     prev_user = None
     prev_id = last_id
+    multipliers = cat_multipliers or {}
 
     while any(buckets.values()):
         candidates = [vid for vid, items in buckets.items() if items and vid != prev_vid]
         if not candidates:
             candidates = [vid for vid, items in buckets.items() if items]
-        candidates.sort(key=lambda vid: (len(buckets[vid]), rng.random()), reverse=True)
+
+        def bucket_score(vid):
+            items = buckets[vid]
+            if not items:
+                return (-1.0, 0.0, 0.0)
+            # 버킷 내 남은 아이템 중 최대 카테고리 선호도 배율 산출
+            best_mult = max(multipliers.get(it[3] if len(it) > 3 and it[3] else "tech", 1.0) for it in items)
+            # 선호도 배율을 1순위로, 버킷 잔여량을 2순위로, 랜덤 지터를 3순위로 반영
+            return (best_mult, len(items), rng.random())
+
+        candidates.sort(key=bucket_score, reverse=True)
         chosen_vid = candidates[0]
 
         items = buckets[chosen_vid]
-        best_idx = 0
-        for idx, item in enumerate(items):
-            if item[0] != prev_id and item[1] != prev_user:
-                best_idx = idx
-                break
+        # 선호 카테고리(multipliers가 높은 순) 우선 선별하되, 이전 작성자(prev_user)와 이전 ID(prev_id) 연속 방지
+        valid_indices = [
+            i for i, it in enumerate(items)
+            if it[0] != prev_id and it[1] != prev_user
+        ]
+        if not valid_indices:
+            valid_indices = [i for i, it in enumerate(items) if it[0] != prev_id]
+        if not valid_indices:
+            valid_indices = list(range(len(items)))
+
+        # valid_indices 중에서 multipliers가 가장 높은 아이템 인덱스 선택
+        best_idx = max(
+            valid_indices,
+            key=lambda idx: multipliers.get(items[idx][3] if len(items[idx]) > 3 and items[idx][3] else "tech", 1.0)
+        )
 
         item = items.pop(best_idx)
         result.append(item)
@@ -144,7 +173,13 @@ def _generate_cycle(reels_meta: list, seed: int, last_video: Optional[str] = Non
 
     return result
 
-def _get_stream_slice(reels_meta: list, seed: int, offset: int, limit: int) -> list:
+def _get_stream_slice(
+    reels_meta: list,
+    seed: int,
+    offset: int,
+    limit: int,
+    cat_multipliers: Optional[dict] = None
+) -> list:
     N = len(reels_meta)
     if N == 0:
         return []
@@ -156,7 +191,15 @@ def _get_stream_slice(reels_meta: list, seed: int, offset: int, limit: int) -> l
     last_id = None
     for c in range(end_cycle + 1):
         c_seed = (seed * 10007 + c * 9973) % 2147483647
-        cycle_items = _generate_cycle(reels_meta, c_seed, last_video=last_vid, last_id=last_id)
+        cycle_items = _generate_cycle(
+            reels_meta,
+            c_seed,
+            last_video=last_vid,
+            last_id=last_id,
+            cat_multipliers=cat_multipliers
+        )
+        if not cycle_items:
+            continue
         last_vid = cycle_items[-1][2]
         last_id = cycle_items[-1][0]
         if c >= start_cycle:
@@ -172,9 +215,18 @@ def get_reels(
     seed: Optional[int] = Query(None, description="Random seed for consistent shuffle"),
     exclude_ids: Optional[str] = Query(None, description="Comma-separated IDs already seen in this session"),
     cursor: Optional[int] = None,
+    refresh: bool = Query(False, description="Force refresh recommendation profile"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
+    # 강제 새로고침 요청 시 유저의 취향 프로필 캐시 무효화 (최신 상호작용 점수 즉시 재계산)
+    if refresh and current_user:
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
+
     # 1. 제외할 릴스 ID 세트 (세션 exclude_ids + 로그인 계정의 시청 이력)
     client_excluded = set()
     if exclude_ids:
@@ -199,7 +251,7 @@ def get_reels(
     if _raw_meta_cache is not None and (now_ts - _raw_meta_cached_time < RAW_META_CACHE_TTL):
         raw_meta = _raw_meta_cache
     else:
-        raw_meta = db.query(Reel.id, Reel.user_id, Reel.video_url).order_by(Reel.id.asc()).all()
+        raw_meta = db.query(Reel.id, Reel.user_id, Reel.video_url, Reel.category).order_by(Reel.id.asc()).all()
         if raw_meta:
             _raw_meta_cache = raw_meta
             _raw_meta_cached_time = now_ts
@@ -218,10 +270,13 @@ def get_reels(
     else:
         candidate_meta = unseen_meta
 
-    reels_meta = [(r[0], r[1], _normalize_video_url(r[2], r[0])) for r in candidate_meta]
+    from app.services.recommendation_service import get_personalized_category_multipliers
+    cat_multipliers = get_personalized_category_multipliers(current_user.id if current_user else None, db)
+
+    reels_meta = [(r[0], r[1], _normalize_video_url(r[2], r[0]), r[3] if len(r) > 3 and r[3] else "tech") for r in candidate_meta]
 
     if seed is not None:
-        page_items = _get_stream_slice(reels_meta, seed=seed, offset=offset, limit=limit)
+        page_items = _get_stream_slice(reels_meta, seed=seed, offset=offset, limit=limit, cat_multipliers=cat_multipliers)
     else:
         page_items = reels_meta[offset : offset + limit]
 
@@ -255,6 +310,40 @@ def get_reels(
             following_author_ids = {row[0] for row in f_rows}
 
     return [serialize_reel(r, current_user, db=None, following_ids=following_author_ids) for r in reels]
+
+@router.get("/{reel_id}", response_model=ReelResponse)
+def get_reel_detail(
+    reel_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user)
+):
+    reel = (
+        db.query(Reel)
+        .options(
+            joinedload(Reel.author),
+            selectinload(Reel.likes),
+            selectinload(Reel.bookmarks),
+            selectinload(Reel.comments).joinedload(Comment.author),
+        )
+        .filter(Reel.id == reel_id)
+        .first()
+    )
+    if not reel:
+        raise HTTPException(status_code=404, detail="릴스를 찾을 수 없습니다.")
+
+    if reel.author and reel.author.is_private:
+        if not current_user:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비공개 계정의 릴스입니다.")
+        if current_user.id != reel.user_id:
+            follow = db.query(Follow).filter(
+                Follow.follower_id == current_user.id,
+                Follow.following_id == reel.user_id,
+                Follow.status == "accepted"
+            ).first()
+            if not follow:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비공개 계정의 릴스입니다.")
+
+    return serialize_reel(reel, current_user, db)
 
 @router.post("", response_model=ReelResponse)
 def create_reel(
@@ -296,35 +385,54 @@ def toggle_reel_like(
 ):
     reel = db.query(Reel).filter(Reel.id == reel_id).first()
     if not reel:
+        # Fallback: 클라이언트가 포스트 ID를 보낸 경우 포스트 좋아요로 안전하게 자동 처리
+        post = db.query(Post).filter(Post.id == reel_id).first()
+        if post:
+            existing_post_like = db.query(Like).filter(Like.post_id == reel_id, Like.user_id == current_user.id).first()
+            if existing_post_like:
+                db.delete(existing_post_like)
+                cancel_notification(db, recipient_id=post.user_id, sender_id=current_user.id, notif_type="like_post", target_id=reel_id)
+                db.commit()
+                db.refresh(post)
+                invalidate_explore_cache()
+                return {"liked": False, "likes_count": len(post.likes)}
+            else:
+                new_post_like = Like(post_id=reel_id, user_id=current_user.id)
+                db.add(new_post_like)
+                send_notification(db, recipient_id=post.user_id, sender_id=current_user.id, notif_type="like_post", target_id=reel_id)
+                db.commit()
+                db.refresh(post)
+                invalidate_explore_cache()
+                try:
+                    from app.services.recommendation_service import invalidate_taste_profile
+                    invalidate_taste_profile(current_user.id)
+                except Exception:
+                    pass
+                return {"liked": True, "likes_count": len(post.likes)}
         raise HTTPException(status_code=404, detail="릴스를 찾을 수 없습니다.")
 
     existing_like = db.query(Like).filter(Like.reel_id == reel_id, Like.user_id == current_user.id).first()
     if existing_like:
         db.delete(existing_like)
-        # 릴스 좋아요 알림 취소
-        db.query(Notification).filter(
-            Notification.recipient_id == reel.user_id,
-            Notification.sender_id == current_user.id,
-            Notification.type == "like_reel",
-            Notification.target_id == reel_id
-        ).delete()
+        # 릴스 좋아요 알림 취소 (공통 서비스 계층)
+        cancel_notification(db, recipient_id=reel.user_id, sender_id=current_user.id, notif_type="like_reel", target_id=reel_id)
         db.commit()
         db.refresh(reel)
+        invalidate_explore_cache()
         return {"liked": False, "likes_count": len(reel.likes)}
     else:
         new_like = Like(reel_id=reel_id, user_id=current_user.id)
         db.add(new_like)
-        # 상대방 릴스일 경우 알림 발송
-        if reel.user_id != current_user.id:
-            notif = Notification(
-                recipient_id=reel.user_id,
-                sender_id=current_user.id,
-                type="like_reel",
-                target_id=reel_id
-            )
-            db.add(notif)
+        # 상대방 릴스일 경우 알림 발송 (공통 서비스 계층)
+        send_notification(db, recipient_id=reel.user_id, sender_id=current_user.id, notif_type="like_reel", target_id=reel_id)
         db.commit()
         db.refresh(reel)
+        invalidate_explore_cache()
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
         return {"liked": True, "likes_count": len(reel.likes)}
 
 @router.post("/{reel_id}/bookmarks")
@@ -335,17 +443,44 @@ def toggle_reel_bookmark(
 ):
     reel = db.query(Reel).filter(Reel.id == reel_id).first()
     if not reel:
+        # Fallback: 클라이언트가 포스트 ID를 보낸 경우 포스트 북마크로 안전하게 자동 처리
+        post = db.query(Post).filter(Post.id == reel_id).first()
+        if post:
+            existing_post_bm = db.query(Bookmark).filter(Bookmark.post_id == reel_id, Bookmark.user_id == current_user.id).first()
+            if existing_post_bm:
+                db.delete(existing_post_bm)
+                db.commit()
+                invalidate_explore_cache()
+                return {"bookmarked": False}
+            else:
+                new_post_bm = Bookmark(post_id=reel_id, user_id=current_user.id)
+                db.add(new_post_bm)
+                db.commit()
+                invalidate_explore_cache()
+                return {"bookmarked": True}
         raise HTTPException(status_code=404, detail="릴스를 찾을 수 없습니다.")
 
     existing_bookmark = db.query(Bookmark).filter(Bookmark.reel_id == reel_id, Bookmark.user_id == current_user.id).first()
     if existing_bookmark:
         db.delete(existing_bookmark)
         db.commit()
+        invalidate_explore_cache()
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
         return {"bookmarked": False}
     else:
         new_bookmark = Bookmark(reel_id=reel_id, user_id=current_user.id)
         db.add(new_bookmark)
         db.commit()
+        invalidate_explore_cache()
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
         return {"bookmarked": True}
 
 @router.get("/{reel_id}/comments", response_model=List[CommentResponse])
@@ -358,15 +493,35 @@ def get_reel_comments(
     if not reel:
         raise HTTPException(status_code=404, detail="릴스를 찾을 수 없습니다.")
 
-    root_comments = db.query(Comment).filter(
-        Comment.reel_id == reel_id,
-        Comment.parent_id.is_(None)
-    ).order_by(Comment.created_at.asc()).all()
+    # 1. 루트 댓글 조회 (author와 likes를 즉시 로딩하여 N+1 쿼리 완벽 제거)
+    root_comments = (
+        db.query(Comment)
+        .options(
+            joinedload(Comment.author),
+            selectinload(Comment.likes),
+        )
+        .filter(
+            Comment.reel_id == reel_id,
+            Comment.parent_id.is_(None)
+        )
+        .order_by(Comment.created_at.asc())
+        .all()
+    )
 
-    replies_all = db.query(Comment).filter(
-        Comment.reel_id == reel_id,
-        Comment.parent_id.isnot(None)
-    ).order_by(Comment.created_at.asc()).all()
+    # 2. 대댓글 조회 (동일하게 author와 likes 즉시 로딩)
+    replies_all = (
+        db.query(Comment)
+        .options(
+            joinedload(Comment.author),
+            selectinload(Comment.likes),
+        )
+        .filter(
+            Comment.reel_id == reel_id,
+            Comment.parent_id.isnot(None)
+        )
+        .order_by(Comment.created_at.asc())
+        .all()
+    )
 
     replies_map = {}
     for r in replies_all:
@@ -440,16 +595,9 @@ def add_reel_comment(
     )
     db.add(comment)
 
-    # 상대방 릴스 또는 부모 댓글 작성자에게 알림 발송
+    # 상대방 릴스 또는 부모 댓글 작성자에게 알림 발송 (공통 서비스 계층)
     recipient_id = parent_comment.user_id if parent_comment else reel.user_id
-    if recipient_id != current_user.id:
-        notif = Notification(
-            recipient_id=recipient_id,
-            sender_id=current_user.id,
-            type="comment",
-            target_id=reel_id
-        )
-        db.add(notif)
+    send_notification(db, recipient_id=recipient_id, sender_id=current_user.id, notif_type="comment", target_id=reel_id, commit=False)
 
     db.commit()
     db.refresh(comment)
@@ -494,3 +642,29 @@ def repost_reel(
     reel.reposts_count += 1
     db.commit()
     return {"reposts_count": reel.reposts_count}
+
+@router.delete("/{reel_id}")
+def delete_reel(
+    reel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    reel = db.query(Reel).filter(Reel.id == reel_id).first()
+    if not reel:
+        raise HTTPException(status_code=404, detail="릴스를 찾을 수 없습니다.")
+    if reel.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="작성자 또는 관리자만 삭제할 수 있습니다.")
+
+    db.delete(reel)
+    db.commit()
+
+    global _raw_meta_cache
+    _raw_meta_cache = None
+
+    try:
+        from app.routers.explore import invalidate_explore_cache
+        invalidate_explore_cache()
+    except Exception:
+        pass
+
+    return {"message": "릴스가 성공적으로 삭제되었습니다."}

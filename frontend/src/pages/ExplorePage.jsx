@@ -5,14 +5,23 @@ import { useModal } from '../contexts/ModalContext';
 import { useAuth } from '../contexts/AuthContext';
 import { exploreApi } from '../services';
 
+// 돋보기 탭 재진입 시 0초 렌더링 및 번쩍임 방지를 위한 모듈 레벨 메모리 캐시
+let _exploreCache = {
+  items: null,
+  hasMore: true,
+  query: '',
+};
+
 export const ExplorePage = () => {
-  const { explorePosts, openPostDetail } = useModal();
+  const { openPostDetail } = useModal();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
-  const [exploreItems, setExploreItems] = useState(explorePosts || []);
-  const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  
+  // 캐시가 있으면 즉시(0초) 렌더링, 없으면 빈 배열로 시작 (더미 데이터로 인한 번쩍임 원천 차단)
+  const [exploreItems, setExploreItems] = useState(() => _exploreCache.items || []);
+  const [loading, setLoading] = useState(!_exploreCache.items);
+  const [hasMore, setHasMore] = useState(_exploreCache.hasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const exploreSentinelRef = useRef(null);
 
@@ -23,28 +32,92 @@ export const ExplorePage = () => {
     }
   }, [user, authLoading, navigate]);
 
+  // 모달 등에서 발생한 좋아요, 북마크, 댓글 변경 사항을 탐색 피드 아이템 및 캐시에 즉시 동기화
+  useEffect(() => {
+    const handleActivity = (e) => {
+      const { postId, isVideo, isLiked, likesCount, newComment, incrementCommentCount, tempId, serverComment } = e.detail;
+      setExploreItems(prev => {
+        const updated = prev.map(item => {
+          const isItemVideo = Boolean(item.is_video || item.isVideo);
+          const isMatch = item.id === postId && (isVideo === undefined || isItemVideo === Boolean(isVideo));
+          if (isMatch) {
+            const nextItem = { ...item };
+            if (typeof isLiked === 'boolean') {
+              nextItem.isLiked = isLiked;
+              nextItem.is_liked = isLiked;
+            }
+            if (typeof likesCount === 'number') {
+              nextItem.likesCount = likesCount;
+              nextItem.likes_count = likesCount;
+            }
+            if (newComment) {
+              const prevComments = nextItem.comments || [];
+              nextItem.comments = [...prevComments, newComment];
+              const newCount = (nextItem.commentsCount ?? nextItem.comments_count ?? prevComments.length) + 1;
+              nextItem.commentsCount = newCount;
+              nextItem.comments_count = newCount;
+            } else if (incrementCommentCount) {
+              const newCount = (nextItem.commentsCount ?? nextItem.comments_count ?? 0) + 1;
+              nextItem.commentsCount = newCount;
+              nextItem.comments_count = newCount;
+            }
+            if (tempId && serverComment && nextItem.comments) {
+              nextItem.comments = nextItem.comments.map(c => c.id === tempId ? { ...c, id: serverComment.id } : c);
+            }
+            return nextItem;
+          }
+          return item;
+        });
+        if (_exploreCache.items) {
+          _exploreCache.items = updated;
+        }
+        return updated;
+      });
+    };
+
+    window.addEventListener('ig_post_activity', handleActivity);
+    return () => window.removeEventListener('ig_post_activity', handleActivity);
+  }, []);
+
   const handlePostClick = (post) => {
     if (!user) {
       navigate('/login');
       return;
     }
-    openPostDetail(post);
+    // exploreItems에서 최신 상태의 post를 가져와 전달 (모달 내 변경 사항이 완벽히 반영된 최신 객체)
+    const currentPost = exploreItems.find(
+      item => item.id === post.id && Boolean(item.is_video ?? item.isVideo) === Boolean(post.is_video ?? post.isVideo)
+    ) || post;
+    openPostDetail(currentPost);
   };
 
   // Initial fetch / search query fetch
   useEffect(() => {
     let isCancelled = false;
+    const isSearching = Boolean(searchQuery.trim());
+
+    // 이미 캐시가 있고 검색어가 없는 첫 마운트인 경우 백그라운드 갱신
+    const shouldShowSkeleton = isSearching ? true : !_exploreCache.items;
+
     const fetchExplore = async () => {
       try {
-        setLoading(true);
+        if (shouldShowSkeleton) {
+          setLoading(true);
+        }
         const data = await exploreApi.getExplore(searchQuery, 24, 0);
         if (!isCancelled) {
           if (data && data.length > 0) {
             setExploreItems(data);
             setHasMore(data.length >= 24);
+            if (!isSearching) {
+              _exploreCache = { items: data, hasMore: data.length >= 24, query: '' };
+            }
           } else {
             setExploreItems([]);
             setHasMore(false);
+            if (!isSearching) {
+              _exploreCache = { items: [], hasMore: false, query: '' };
+            }
           }
         }
       } catch (err) {
@@ -54,7 +127,7 @@ export const ExplorePage = () => {
       }
     };
 
-    const timer = setTimeout(fetchExplore, searchQuery ? 250 : 0);
+    const timer = setTimeout(fetchExplore, isSearching ? 300 : 0);
     return () => {
       isCancelled = true;
       clearTimeout(timer);
@@ -63,7 +136,7 @@ export const ExplorePage = () => {
 
   // Load more explore items
   const loadMoreExplore = useCallback(async () => {
-    if (!hasMore || loadingMore || loading) return;
+    if (!hasMore || loadingMore || loading || exploreItems.length === 0) return;
     try {
       setLoadingMore(true);
       const nextOffset = exploreItems.length;
@@ -72,11 +145,19 @@ export const ExplorePage = () => {
         setExploreItems(prev => {
           const existingIds = new Set(prev.map(item => `${item.is_video ? 'reel' : 'post'}-${item.id}`));
           const uniqueNew = data.filter(item => !existingIds.has(`${item.is_video ? 'reel' : 'post'}-${item.id}`));
-          return [...prev, ...uniqueNew];
+          const updated = [...prev, ...uniqueNew];
+          if (!searchQuery.trim()) {
+            _exploreCache.items = updated;
+            _exploreCache.hasMore = data.length >= 24;
+          }
+          return updated;
         });
         setHasMore(data.length >= 24);
       } else {
         setHasMore(false);
+        if (!searchQuery.trim()) {
+          _exploreCache.hasMore = false;
+        }
       }
     } catch (err) {
       console.warn('Failed to load more explore items:', err);
@@ -85,22 +166,22 @@ export const ExplorePage = () => {
     }
   }, [hasMore, loadingMore, loading, exploreItems.length, searchQuery]);
 
-  // Observer for explore sentinel (1200px 사전 로딩으로 무한 스크롤 멈춤 현상 제거)
+  // Observer for explore sentinel (400px 사전 로딩으로 안정적 무한 스크롤)
   useEffect(() => {
     const sentinel = exploreSentinelRef.current;
     if (!sentinel) return;
 
     const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && hasMore && !loadingMore && !loading) {
+      if (entries[0].isIntersecting && hasMore && !loadingMore && !loading && exploreItems.length > 0) {
         loadMoreExplore();
       }
-    }, { rootMargin: '1200px' });
+    }, { rootMargin: '400px' });
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMoreExplore, hasMore, loadingMore, loading]);
+  }, [loadMoreExplore, hasMore, loadingMore, loading, exploreItems.length]);
 
-  const displayedPosts = exploreItems.length > 0 ? exploreItems : explorePosts;
+  const displayedPosts = exploreItems;
 
   return (
     <div
@@ -147,7 +228,31 @@ export const ExplorePage = () => {
       </div>
 
       {/* 2. Explore 4-Column Media Grid (Ultra-narrow gap: 2px) */}
-      {displayedPosts.length === 0 ? (
+      {loading && displayedPosts.length === 0 ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '2px',
+            width: '100%',
+          }}
+          className="explore-grid-container"
+        >
+          {Array.from({ length: 16 }).map((_, idx) => (
+            <div
+              key={idx}
+              style={{
+                position: 'relative',
+                aspectRatio: '4 / 5',
+                backgroundColor: 'var(--border-subtle, #262626)',
+                borderRadius: '0px',
+                overflow: 'hidden',
+                animation: 'explore-shimmer 1.5s infinite ease-in-out',
+              }}
+            />
+          ))}
+        </div>
+      ) : displayedPosts.length === 0 ? (
         <div
           style={{
             textAlign: 'center',
@@ -168,11 +273,12 @@ export const ExplorePage = () => {
           className="explore-grid-container"
         >
           {displayedPosts.map((post) => {
-            const coverUrl = post.mediaUrl || post.media?.[0]?.mediaUrl;
+            const coverUrl = post.mediaUrl || post.media_url || post.media?.[0]?.mediaUrl || post.media?.[0]?.media_url;
+            const itemKey = `${post.is_video || post.isVideo ? 'reel' : 'post'}-${post.id}`;
 
             return (
               <div
-                key={post.id}
+                key={itemKey}
                 onClick={() => handlePostClick(post)}
                 style={{
                   position: 'relative',
@@ -221,11 +327,11 @@ export const ExplorePage = () => {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '15px' }}>
                     <Heart size={20} fill="#ffffff" />
-                    <span>{(post.likesCount || 0).toLocaleString()}</span>
+                    <span>{((post.likesCount ?? post.likes_count) || 0).toLocaleString()}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '15px' }}>
                     <MessageCircle size={20} fill="#ffffff" />
-                    <span>{(post.commentsCount || 0).toLocaleString()}</span>
+                    <span>{((post.commentsCount ?? post.comments_count ?? post.comments?.length) || 0).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -340,6 +446,11 @@ export const ExplorePage = () => {
       </button>
 
       <style>{`
+        @keyframes explore-shimmer {
+          0% { opacity: 0.5; }
+          50% { opacity: 0.9; }
+          100% { opacity: 0.5; }
+        }
         .explore-card-item:hover .explore-hover-overlay {
           opacity: 1 !important;
         }

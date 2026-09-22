@@ -1,6 +1,7 @@
 from typing import List, Optional
+from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.user import User
 from app.models.follow import Follow
@@ -8,10 +9,11 @@ from app.models.post import Post
 from app.models.reel import Reel
 from app.models.bookmark import Bookmark
 from app.schemas.user import UserSimple, UserProfileResponse, UserUpdate, ProfileImageUpdate
-from app.schemas.post import PostResponse
+from app.schemas.post import PostResponse, MediaResponse
 from app.schemas.reel import ReelResponse
 from app.core.deps import get_current_user, get_optional_current_user
-from app.routers.posts import serialize_post
+from app.core.utils import format_time_ago
+from app.routers.posts import serialize_post, POST_EAGER_OPTIONS
 from app.routers.reels import serialize_reel
 
 from sqlalchemy import func
@@ -78,13 +80,63 @@ def get_saved_posts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    bookmarks = db.query(Bookmark).filter(
-        Bookmark.user_id == current_user.id,
-        Bookmark.post_id.isnot(None)
-    ).order_by(Bookmark.created_at.desc()).all()
+    bookmarks = (
+        db.query(Bookmark)
+        .options(
+            joinedload(Bookmark.post).joinedload(Post.author),
+            joinedload(Bookmark.post).selectinload(Post.media),
+            joinedload(Bookmark.post).selectinload(Post.likes),
+            joinedload(Bookmark.post).selectinload(Post.bookmarks),
+            joinedload(Bookmark.post).selectinload(Post.comments),
+            joinedload(Bookmark.reel).joinedload(Reel.author),
+            joinedload(Bookmark.reel).selectinload(Reel.likes),
+            joinedload(Bookmark.reel).selectinload(Reel.comments),
+        )
+        .filter(Bookmark.user_id == current_user.id)
+        .order_by(Bookmark.created_at.desc())
+        .all()
+    )
 
-    posts = [b.post for b in bookmarks if b.post]
-    return [serialize_post(p, current_user) for p in posts]
+    saved_items = []
+    for b in bookmarks:
+        if b.post:
+            try:
+                saved_items.append(serialize_post(b.post, current_user))
+            except Exception:
+                continue
+        elif b.reel:
+            r = b.reel
+            if not r or not r.author:
+                continue
+            author_data = UserSimple(
+                id=r.author.id,
+                username=r.author.username,
+                full_name=r.author.full_name,
+                profile_image_url=r.author.profile_image_url,
+                is_verified=r.author.is_verified,
+                is_admin=r.author.is_admin,
+            )
+            saved_items.append(PostResponse(
+                id=r.id,
+                caption=r.caption,
+                location=None,
+                category=r.category,
+                created_at=r.created_at,
+                time_ago=format_time_ago(r.created_at),
+                author=author_data,
+                media=[MediaResponse(
+                    id=r.id,
+                    media_url=r.poster_url or r.video_url,
+                    media_type="video",
+                    order_index=0
+                )],
+                likes_count=len(r.likes),
+                comments_count=len(r.comments),
+                is_liked=any(l.user_id == current_user.id for l in r.likes),
+                is_bookmarked=True,
+                top_comments=[]
+            ))
+    return saved_items
 
 @router.put("/profile", response_model=UserSimple)
 def update_profile(
@@ -185,7 +237,10 @@ def get_user_profile_by_profile_path(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    user = db.query(User).filter(User.username == username).first()
+    decoded_username = unquote(username)
+    user = db.query(User).filter(
+        (User.username == username) | (User.username == decoded_username)
+    ).first()
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
     return build_user_profile(user, current_user, db)
@@ -196,7 +251,10 @@ def get_user_profile(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    user = db.query(User).filter(User.username == username).first()
+    decoded_username = unquote(username)
+    user = db.query(User).filter(
+        (User.username == username) | (User.username == decoded_username)
+    ).first()
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
     return build_user_profile(user, current_user, db)
@@ -221,14 +279,23 @@ def get_user_posts(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    user = db.query(User).filter(User.username == username).first()
+    decoded_username = unquote(username)
+    user = db.query(User).filter(
+        (User.username == username) | (User.username == decoded_username)
+    ).first()
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
     if not can_view_user_content(user, current_user, db):
         return []
 
-    posts = db.query(Post).filter(Post.user_id == user.id).order_by(Post.created_at.desc()).all()
+    posts = (
+        db.query(Post)
+        .options(*POST_EAGER_OPTIONS)
+        .filter(Post.user_id == user.id)
+        .order_by(Post.created_at.desc())
+        .all()
+    )
     return [serialize_post(p, current_user) for p in posts]
 
 @router.get("/{username}/reels", response_model=List[ReelResponse])
@@ -237,7 +304,10 @@ def get_user_reels(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    user = db.query(User).filter(User.username == username).first()
+    decoded_username = unquote(username)
+    user = db.query(User).filter(
+        (User.username == username) | (User.username == decoded_username)
+    ).first()
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 

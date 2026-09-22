@@ -69,6 +69,13 @@ def record_content_view(
     db.commit()
     db.refresh(view)
 
+    if payload.not_interested or is_completed:
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
+
     return view
 
 @router.get("/my", response_model=List[ContentViewResponse])

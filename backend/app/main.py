@@ -25,6 +25,7 @@ from app.routers import (
     admin_router,
     views_router,
     reports_router,
+    recommendations_router,
 )
 
 # 데이터베이스 테이블 자동 생성
@@ -69,10 +70,17 @@ def init_db_and_admin():
         except Exception as e:
             print(f"[WARN] 테이블 스키마 검사 중 예외: {e}")
 
+    # SECRET_KEY 기본값 점검
+    if settings.SECRET_KEY == "supersecret_jwt_key_change_me_in_production":
+        print("[SECURITY WARNING] 기본 SECRET_KEY가 사용 중입니다. .env 파일에서 강력한 비밀키로 교체하십시오.")
+
     db = SessionLocal()
     try:
         admin_user = db.query(User).filter(User.username == "admin").first()
         initial_admin_pass = getattr(settings, "INITIAL_ADMIN_PASSWORD", "pass123")
+        if initial_admin_pass == "pass123":
+            print("[SECURITY WARNING] 기본 관리자 비밀번호('pass123')가 설정되어 있습니다. 반드시 환경변수를 통해 변경하십시오.")
+
         if not admin_user:
             admin_user = User(
                 username="admin",
@@ -94,6 +102,32 @@ def init_db_and_admin():
                 admin_user.is_admin = True
                 db.commit()
                 print("[INFO] 관리자 계정(admin) 관리자 권한이 갱신되었습니다.")
+
+        # 활성 데모 스토리 자동 유지 (만료되지 않은 24시간 스토리 보장)
+        from datetime import datetime, timedelta
+        from app.models.story import Story
+        now = datetime.utcnow()
+        active_story_count = db.query(Story).filter(Story.expires_at > now).count()
+        if active_story_count < 5:
+            # 주요 크리에이터 유저(김민준, 이서준, 박도윤, 최예준, 강하준, 윤지호 등)에게 24시간 스토리 보충
+            sample_stories = [
+                (3, "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=900", "image"),
+                (4, "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=900", "image"),
+                (5, "https://images.unsplash.com/photo-1483985988355-763728e1935b?w=900", "image"),
+                (6, "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=900", "image"),
+                (8, "https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=900", "image"),
+                (10, "https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=900", "image"),
+            ]
+            expires = now + timedelta(hours=24)
+            for uid, url, mtype in sample_stories:
+                u_exists = db.query(User).filter(User.id == uid).first()
+                if u_exists:
+                    has_active = db.query(Story).filter(Story.user_id == uid, Story.expires_at > now).first()
+                    if not has_active:
+                        st = Story(user_id=uid, media_url=url, media_type=mtype, expires_at=expires)
+                        db.add(st)
+            db.commit()
+            print("[INFO] 팔로잉 크리에이터들의 24시간 활성 스토리가 성공적으로 시딩되었습니다.")
     except Exception as e:
         print(f"[WARN] 관리자 계정 초기화 중 예외: {e}")
         db.rollback()
@@ -112,14 +146,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS 설정 (로컬 개발 환경 및 Vercel 배포 도메인 연동 지원)
+# CORS 설정 (로컬 개발 환경 및 Vercel 배포 도메인만 엄격 허용 - 와일드카드 credentials 차단)
 cors_origins = list(settings.BACKEND_CORS_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"https?://.*",  # Vercel 배포 URL(*.vercel.app) 및 모든 클라이언트 원격 연동 지원
+    allow_origin_regex=r"^https:\/\/([a-zA-Z0-9_\-]+\.)*vercel\.app$",  # Vercel 프리뷰 및 프로덕션 도메인만 허용
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -160,6 +194,7 @@ app.include_router(uploads_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(views_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(recommendations_router, prefix="/api")
 
 @app.get("/")
 def root():

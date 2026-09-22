@@ -1,12 +1,10 @@
 import React from 'react';
-import { Grid, Film, Bookmark, UserCheck } from 'lucide-react';
+import { Grid, Bookmark } from 'lucide-react';
 
 export const ProfileTabs = ({ activeTab, onChangeTab, isMe = true }) => {
   const tabs = [
     { id: 'posts', label: '게시물', icon: Grid },
-    { id: 'reels', label: '릴스', icon: Film },
     ...(isMe ? [{ id: 'saved', label: '저장됨', icon: Bookmark }] : []),
-    { id: 'tagged', label: '태그됨', icon: UserCheck },
   ];
 
   return (

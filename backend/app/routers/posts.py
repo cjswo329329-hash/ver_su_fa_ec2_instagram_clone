@@ -4,16 +4,20 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.post import Post, PostMedia
+from app.models.reel import Reel
 from app.models.user import User
 from app.models.like import Like
 from app.models.bookmark import Bookmark
 from app.models.comment import Comment
-from app.models.notification import Notification
 from app.models.follow import Follow
+from app.models.content_view import ContentView
 from app.schemas.post import PostResponse, PostCreate, PostUpdate, MediaResponse, CommentSimple
 from app.schemas.user import UserSimple
 from app.schemas.common import PaginatedResponse
 from app.core.deps import get_current_user, get_optional_current_user
+from app.core.utils import format_time_ago
+from app.services.notification_service import send_notification, cancel_notification
+from app.routers.explore import invalidate_explore_cache
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
@@ -25,26 +29,6 @@ POST_EAGER_OPTIONS = (
     selectinload(Post.bookmarks),
     selectinload(Post.comments).joinedload(Comment.author),
 )
-
-def format_time_ago(dt: datetime) -> str:
-    now = datetime.utcnow()
-    diff = now - dt
-    seconds = diff.total_seconds()
-    if seconds < 60:
-        return "방금 전"
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{int(minutes)}분 전"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{int(hours)}시간 전"
-    days = hours // 24
-    if days < 7:
-        return f"{int(days)}일 전"
-    weeks = days // 7
-    if weeks < 52:
-        return f"{int(weeks)}주 전"
-    return f"{int(days // 365)}년 전"
 
 def serialize_post(
     post: Post,
@@ -126,32 +110,57 @@ def get_feed(
     next_cursor = None
     following_author_ids = set()
 
-    # 1. 로그인 사용자이고 팔로우한 유저가 있는 경우: 팔로우한 유저 + 본인 게시물 조회
+    # 1. 로그인 사용자 (기획서 3단계 우선순위 & Seen Filter 적용)
     if current_user:
+        # [Seen Filter] 이미 완독(completed=True 또는 3초 이상 체류)한 게시물 ID 서브쿼리
+        viewed_subquery = db.query(ContentView.post_id).filter(
+            ContentView.user_id == current_user.id,
+            ContentView.post_id.isnot(None),
+            (ContentView.completed == True) | (ContentView.duration_ms >= 3000)
+        )
+
         following_rows = db.query(Follow.following_id).filter(
             Follow.follower_id == current_user.id,
             Follow.status == "accepted"
         ).all()
         following_author_ids = {f[0] for f in following_rows}
+        target_user_ids = following_author_ids | {current_user.id}
 
-        if following_author_ids:
-            target_user_ids = following_author_ids | {current_user.id}
-            query = db.query(Post).options(*POST_EAGER_OPTIONS).filter(Post.user_id.in_(target_user_ids))
+        # [1순위] 내 최근 미시청 글 & [2순위] 팔로잉 친구들의 미시청 글
+        if target_user_ids:
+            query = db.query(Post).options(*POST_EAGER_OPTIONS).filter(
+                Post.user_id.in_(target_user_ids),
+                Post.id.notin_(viewed_subquery)
+            )
             if cursor:
                 query = query.filter(Post.id < cursor)
 
             posts = query.order_by(Post.id.desc()).limit(limit + 1).all()
+            if posts:
+                has_more = len(posts) > limit
+                returned_posts = posts[:limit]
+                next_cursor = returned_posts[-1].id if has_more and returned_posts else None
 
-            has_more = len(posts) > limit
-            returned_posts = posts[:limit]
-            next_cursor = returned_posts[-1].id if has_more and returned_posts else None
+        # [3순위] 확인하지 않은 친구 게시물이 없거나 소진된 경우: 개인화 AI 추천 공개 미시청 글 (무한 연속성)
+        if not returned_posts:
+            from app.services.recommendation_service import recommend_posts_for_user
+            rec_posts, rec_has_more, rec_next_cursor = recommend_posts_for_user(
+                db=db,
+                user_id=current_user.id,
+                limit=limit,
+                cursor=cursor,
+                exclude_ids=target_user_ids,
+                following_ids=following_author_ids
+            )
+            returned_posts = rec_posts
+            has_more = rec_has_more
+            next_cursor = rec_next_cursor
 
-    # 2. 비로그인 사용자 또는 팔로우한 사람이 아직 없거나(게시물 없는 경우도 포함): 전체 공개 게시물 최신순
-    if not returned_posts:
+    # 2. 비로그인 게스트 사용자: 전체 공개 계정 최신순 노출
+    else:
         query = db.query(Post).options(*POST_EAGER_OPTIONS).join(User, Post.user_id == User.id).filter(
             User.is_private == False
         )
-
         if cursor:
             query = query.filter(Post.id < cursor)
 
@@ -169,18 +178,40 @@ def get_explore_posts(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user)
 ):
-    posts = db.query(Post).options(*POST_EAGER_OPTIONS).order_by(Post.id.desc()).limit(limit).all()
+    from app.services.recommendation_service import recommend_posts_for_user
     following_author_ids = set()
-    if current_user and posts:
-        author_ids = {p.user_id for p in posts if p.user_id != current_user.id}
-        if author_ids:
-            f_rows = db.query(Follow.following_id).filter(
-                Follow.follower_id == current_user.id,
-                Follow.following_id.in_(author_ids),
-                Follow.status == "accepted"
-            ).all()
-            following_author_ids = {r[0] for r in f_rows}
+    user_id = current_user.id if current_user else None
+    if current_user:
+        f_rows = db.query(Follow.following_id).filter(
+            Follow.follower_id == current_user.id,
+            Follow.status == "accepted"
+        ).all()
+        following_author_ids = {r[0] for r in f_rows}
+
+    posts, _, _ = recommend_posts_for_user(
+        db=db,
+        user_id=user_id,
+        limit=limit,
+        cursor=None,
+        exclude_ids=None,
+        following_ids=following_author_ids
+    )
     return [serialize_post(p, current_user, db=None, following_ids=following_author_ids) for p in posts]
+
+def check_post_access(post: Post, user: Optional[User], db: Session) -> bool:
+    """비공개 계정 게시물의 인가 여부 검증 (작성자 본인 또는 accepted 팔로워)"""
+    if not post.author or not post.author.is_private:
+        return True
+    if not user:
+        return False
+    if user.id == post.user_id:
+        return True
+    follow = db.query(Follow).filter(
+        Follow.follower_id == user.id,
+        Follow.following_id == post.user_id,
+        Follow.status == "accepted"
+    ).first()
+    return bool(follow)
 
 @router.get("/{post_id}", response_model=PostResponse)
 def get_post_detail(
@@ -193,21 +224,8 @@ def get_post_detail(
         raise HTTPException(status_code=404, detail="게시물을 찾을 수 없습니다.")
 
     # 비공개 계정 게시물 접근 제어
-    if post.author and post.author.is_private:
-        is_allowed = False
-        if current_user:
-            if current_user.id == post.user_id:
-                is_allowed = True
-            else:
-                follow = db.query(Follow).filter(
-                    Follow.follower_id == current_user.id,
-                    Follow.following_id == post.user_id,
-                    Follow.status == "accepted"
-                ).first()
-                if follow:
-                    is_allowed = True
-        if not is_allowed:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비공개 계정의 게시물입니다.")
+    if not check_post_access(post, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비공개 계정의 게시물입니다.")
 
     return serialize_post(post, current_user, db)
 
@@ -281,35 +299,57 @@ def toggle_post_like(
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
+        # Fallback: 클라이언트가 릴스 ID를 보낸 경우 릴스 좋아요로 안전하게 자동 처리
+        reel = db.query(Reel).filter(Reel.id == post_id).first()
+        if reel:
+            existing_reel_like = db.query(Like).filter(Like.reel_id == post_id, Like.user_id == current_user.id).first()
+            if existing_reel_like:
+                db.delete(existing_reel_like)
+                cancel_notification(db, recipient_id=reel.user_id, sender_id=current_user.id, notif_type="like_reel", target_id=post_id)
+                db.commit()
+                db.refresh(reel)
+                invalidate_explore_cache()
+                return {"liked": False, "likes_count": len(reel.likes)}
+            else:
+                new_reel_like = Like(reel_id=post_id, user_id=current_user.id)
+                db.add(new_reel_like)
+                send_notification(db, recipient_id=reel.user_id, sender_id=current_user.id, notif_type="like_reel", target_id=post_id)
+                db.commit()
+                db.refresh(reel)
+                invalidate_explore_cache()
+                try:
+                    from app.services.recommendation_service import invalidate_taste_profile
+                    invalidate_taste_profile(current_user.id)
+                except Exception:
+                    pass
+                return {"liked": True, "likes_count": len(reel.likes)}
         raise HTTPException(status_code=404, detail="게시물을 찾을 수 없습니다.")
+
+    if not check_post_access(post, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비공개 계정의 게시물에는 상호작용할 수 없습니다.")
     
     existing_like = db.query(Like).filter(Like.post_id == post_id, Like.user_id == current_user.id).first()
     if existing_like:
         db.delete(existing_like)
-        # 좋아요 알림 취소
-        db.query(Notification).filter(
-            Notification.recipient_id == post.user_id,
-            Notification.sender_id == current_user.id,
-            Notification.type == "like_post",
-            Notification.target_id == post_id
-        ).delete()
+        # 좋아요 알림 취소 (공통 서비스 계층)
+        cancel_notification(db, recipient_id=post.user_id, sender_id=current_user.id, notif_type="like_post", target_id=post_id)
         db.commit()
         db.refresh(post)
+        invalidate_explore_cache()
         return {"liked": False, "likes_count": len(post.likes)}
     else:
         new_like = Like(post_id=post_id, user_id=current_user.id)
         db.add(new_like)
-        # 상대방 게시물일 경우 알림 생성
-        if post.user_id != current_user.id:
-            notif = Notification(
-                recipient_id=post.user_id,
-                sender_id=current_user.id,
-                type="like_post",
-                target_id=post_id
-            )
-            db.add(notif)
+        # 상대방 게시물일 경우 알림 생성 (공통 서비스 계층)
+        send_notification(db, recipient_id=post.user_id, sender_id=current_user.id, notif_type="like_post", target_id=post_id)
         db.commit()
         db.refresh(post)
+        invalidate_explore_cache()
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
         return {"liked": True, "likes_count": len(post.likes)}
 
 @router.post("/{post_id}/bookmarks")
@@ -320,15 +360,45 @@ def toggle_post_bookmark(
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
-        raise HTTPException(status_code=404, detail="게시물을 찾을 수 없습니다.")
+        # Fallback: 클라이언트가 릴스 ID를 보낸 경우 릴스 북마크로 처리
+        reel = db.query(Reel).filter(Reel.id == post_id).first()
+        if reel:
+            existing_reel_bm = db.query(Bookmark).filter(Bookmark.reel_id == post_id, Bookmark.user_id == current_user.id).first()
+            if existing_reel_bm:
+                db.delete(existing_reel_bm)
+                db.commit()
+                invalidate_explore_cache()
+                return {"bookmarked": False}
+            else:
+                new_reel_bm = Bookmark(reel_id=post_id, user_id=current_user.id)
+                db.add(new_reel_bm)
+                db.commit()
+                invalidate_explore_cache()
+                return {"bookmarked": True}
+        raise HTTPException(status_code=404, detail="게시물 또는 릴스를 찾을 수 없습니다.")
+
+    if not check_post_access(post, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비공개 계정의 게시물은 저장할 수 없습니다.")
 
     existing_bookmark = db.query(Bookmark).filter(Bookmark.post_id == post_id, Bookmark.user_id == current_user.id).first()
     if existing_bookmark:
         db.delete(existing_bookmark)
         db.commit()
+        invalidate_explore_cache()
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
         return {"bookmarked": False}
     else:
         new_bookmark = Bookmark(post_id=post_id, user_id=current_user.id)
         db.add(new_bookmark)
         db.commit()
+        invalidate_explore_cache()
+        try:
+            from app.services.recommendation_service import invalidate_taste_profile
+            invalidate_taste_profile(current_user.id)
+        except Exception:
+            pass
         return {"bookmarked": True}

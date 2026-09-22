@@ -11,6 +11,7 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { DirectPage } from './pages/DirectPage';
 import ReelsPage from './pages/ReelsPage';
+import { PostDetailPage } from './pages/PostDetailPage';
 
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { PublicOnlyRoute } from './components/auth/PublicOnlyRoute';
@@ -113,6 +114,8 @@ export function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="p/:postId" element={<PostDetailPage />} />
+        <Route path="post/:postId" element={<PostDetailPage />} />
         <Route path="profile/:username" element={<ProfilePage />} />
         <Route path=":username" element={<ProfilePage />} />
         <Route path="*" element={<NotFoundPage />} />

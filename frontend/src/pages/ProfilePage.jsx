@@ -1,23 +1,25 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { ProfileHeader } from '../components/profile/ProfileHeader';
 import { StoryHighlights } from '../components/profile/StoryHighlights';
 import { ProfileTabs } from '../components/profile/ProfileTabs';
 import { PostGrid } from '../components/profile/PostGrid';
+import { SavedCollections } from '../components/profile/SavedCollections';
 import { useAuth } from '../contexts/AuthContext';
 import { userApi } from '../services';
 
 export const ProfilePage = () => {
   const { username } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get('tab') || 'posts';
 
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState(initialTab);
   const [profileUser, setProfileUser] = useState(null);
-  const [tabPosts, setTabPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tabLoading, setTabLoading] = useState(false);
+
+  // 탭 캐시: { posts: PostResponse[], saved: PostResponse[] }
+  const [tabCache, setTabCache] = useState({ posts: null, saved: null });
 
   let effectiveUsername = username || user?.username || 'alex_creator';
   try {
@@ -27,15 +29,25 @@ export const ProfilePage = () => {
   }
   const isMe = !username || (user && (username === user.username || effectiveUsername === user.username));
 
+  // 유효한 탭만 허용 (타인 프로필에서는 저장됨 탭 차단)
+  const allowedTabs = isMe ? ['posts', 'saved'] : ['posts'];
+  const initialTab = allowedTabs.includes(searchParams.get('tab')) ? searchParams.get('tab') : 'posts';
+  const [activeTab, setActiveTab] = useState(initialTab);
+
   // Sync tab with URL search parameter if changed externally
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam && ['posts', 'reels', 'saved', 'tagged'].includes(tabParam)) {
+    if (tabParam && allowedTabs.includes(tabParam)) {
       setActiveTab(tabParam);
+    } else if (tabParam && !allowedTabs.includes(tabParam)) {
+      // 잘못된 탭 접근 시 posts로 복구
+      setActiveTab('posts');
+      setSearchParams({});
     }
-  }, [searchParams]);
+  }, [searchParams, isMe]);
 
   const handleTabChange = (tabId) => {
+    if (!allowedTabs.includes(tabId)) return;
     setActiveTab(tabId);
     setSearchParams(tabId === 'posts' ? {} : { tab: tabId });
   };
@@ -64,47 +76,60 @@ export const ProfilePage = () => {
   // Reset state on target username change
   useEffect(() => {
     setProfileUser(null);
-    setTabPosts([]);
+    setTabCache({ posts: null, saved: null });
+    setActiveTab('posts');
   }, [effectiveUsername]);
 
-  // Fetch posts for active tab
-  useEffect(() => {
-    let isCancelled = false;
+  // Fetch posts for active tab with Cache-First strategy
+  const fetchTabContent = useCallback(async (tab, forceRefresh = false) => {
+    // 캐시가 있고 강제 새로고침이 아니면 즉시 반환 (0초 로딩)
+    if (!forceRefresh && tabCache[tab] !== null) {
+      return;
+    }
 
-    const loadTabContent = async () => {
-      try {
-        if (activeTab === 'saved') {
-          const saved = await userApi.getSavedPosts();
-          if (!isCancelled) setTabPosts(saved || []);
-        } else if (activeTab === 'reels') {
-          const reels = await userApi.getUserReels(effectiveUsername);
-          if (!isCancelled) {
-            const formatted = (reels || []).map(r => ({
-              id: r.id,
-              mediaUrl: r.posterUrl || r.videoUrl,
-              likesCount: r.likesCount || 0,
-              commentsCount: r.commentsCount || 0,
-              isVideo: true,
-            }));
-            setTabPosts(formatted);
-          }
-        } else if (activeTab === 'posts') {
-          const posts = await userApi.getUserPosts(effectiveUsername);
-          if (!isCancelled) setTabPosts(posts || []);
-        } else if (activeTab === 'tagged') {
-          // Tagged mock fallback
-          if (!isCancelled) setTabPosts([]);
+    setTabLoading(true);
+    try {
+      if (tab === 'saved') {
+        if (!isMe) {
+          setTabCache(prev => ({ ...prev, saved: [] }));
+          return;
         }
-      } catch (err) {
-        console.error(`Failed to load ${activeTab}:`, err);
+        const saved = await userApi.getSavedPosts();
+        setTabCache(prev => ({ ...prev, saved: saved || [] }));
+      } else if (tab === 'posts') {
+        const posts = await userApi.getUserPosts(effectiveUsername);
+        setTabCache(prev => ({ ...prev, posts: posts || [] }));
+      }
+    } catch (err) {
+      console.error(`Failed to load ${tab}:`, err);
+      setTabCache(prev => ({ ...prev, [tab]: [] }));
+    } finally {
+      setTabLoading(false);
+    }
+  }, [activeTab, effectiveUsername, isMe, tabCache]);
+
+  useEffect(() => {
+    fetchTabContent(activeTab);
+  }, [activeTab, effectiveUsername, fetchTabContent]);
+
+  // 외부에서 북마크 토글 이벤트 수신 시 저장됨 탭 캐시 자동 갱신
+  useEffect(() => {
+    const handleBookmarkUpdate = () => {
+      // 저장됨 탭 캐시 무효화 및 활성 탭이 saved면 즉시 재조회
+      if (activeTab === 'saved') {
+        fetchTabContent('saved', true);
+      } else {
+        setTabCache(prev => ({ ...prev, saved: null }));
       }
     };
 
-    loadTabContent();
+    window.addEventListener('ig_bookmark_updated', handleBookmarkUpdate);
     return () => {
-      isCancelled = true;
+      window.removeEventListener('ig_bookmark_updated', handleBookmarkUpdate);
     };
-  }, [activeTab, effectiveUsername]);
+  }, [activeTab, fetchTabContent]);
+
+  const currentTabPosts = tabCache[activeTab] || [];
 
   const displayedUser = profileUser
     ? (isMe && user ? { ...user, ...profileUser } : profileUser)
@@ -177,13 +202,40 @@ export const ProfilePage = () => {
         <>
           <StoryHighlights isMe={isMe} />
           <ProfileTabs activeTab={activeTab} onChangeTab={handleTabChange} isMe={isMe} />
-          <div style={{ marginTop: '20px' }}>
-            <PostGrid posts={tabPosts} tab={activeTab} isMe={isMe} />
+          <div style={{ marginTop: '20px', minHeight: '300px' }}>
+            {tabLoading && tabCache[activeTab] === null ? (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  padding: '60px 0',
+                }}
+              >
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    border: '3px solid var(--border-color)',
+                    borderTopColor: 'var(--text-primary)',
+                    borderRadius: '50%',
+                    animation: 'spin 0.8s linear infinite',
+                  }}
+                />
+              </div>
+            ) : activeTab === 'saved' ? (
+              <SavedCollections savedPosts={currentTabPosts} isMe={isMe} />
+            ) : (
+              <PostGrid posts={currentTabPosts} tab="posts" isMe={isMe} />
+            )}
           </div>
         </>
       )}
 
       <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
         @media (max-width: 768px) {
           .profile-page-container {
             padding: 14px 16px 40px 16px !important;

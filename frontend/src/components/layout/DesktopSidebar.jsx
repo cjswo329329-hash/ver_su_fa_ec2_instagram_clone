@@ -55,7 +55,17 @@ export const DesktopSidebar = () => {
       label: '릴스',
       icon: Film,
       path: user ? '/reels' : undefined,
-      onClick: user ? undefined : () => navigate('/login', { state: { from: { pathname: '/reels' } } })
+      onClick: (e) => {
+        if (!user) {
+          e?.preventDefault();
+          navigate('/login', { state: { from: { pathname: '/reels' } } });
+          return;
+        }
+        if (location.pathname.startsWith('/reels')) {
+          e?.preventDefault();
+          window.dispatchEvent(new CustomEvent('ig_reels_refresh'));
+        }
+      }
     },
     {
       label: '메시지',
@@ -188,7 +198,7 @@ export const DesktopSidebar = () => {
               </div>
             );
 
-            if (item.onClick) {
+            if (!item.path && item.onClick) {
               return (
                 <div
                   key={idx}
@@ -205,6 +215,7 @@ export const DesktopSidebar = () => {
                 key={idx}
                 to={item.path}
                 end={item.path === '/'}
+                onClick={item.onClick}
                 className={({ isActive }) =>
                   isActive ? 'sidebar-nav-link active-link' : 'sidebar-nav-link'
                 }

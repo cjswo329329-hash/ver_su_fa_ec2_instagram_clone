@@ -12,9 +12,12 @@ export const DirectPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
+  const getStorageKey = (userId) => (userId ? `ig_direct_conversations_${userId}` : 'ig_direct_conversations_guest');
+
   // Load conversations from backend with fallback
   const [conversations, setConversations] = useState(() => {
-    const saved = localStorage.getItem('ig_direct_conversations_v2');
+    const key = getStorageKey(user?.id);
+    const saved = localStorage.getItem(key);
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -28,11 +31,30 @@ export const DirectPage = () => {
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [isNewMessageOpen, setIsNewMessageOpen] = useState(false);
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
+  const [errorToast, setErrorToast] = useState('');
 
-  // Sync to localStorage
+  // 유저 ID 변경 시 해당 유저의 대화 목록 캐시로 전환 (다중 사용자 격리)
   useEffect(() => {
-    localStorage.setItem('ig_direct_conversations_v2', JSON.stringify(conversations));
-  }, [conversations]);
+    if (user?.id) {
+      const key = getStorageKey(user.id);
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        try {
+          setConversations(JSON.parse(saved));
+        } catch (e) {
+          setConversations([]);
+        }
+      }
+    }
+  }, [user?.id]);
+
+  // Sync to localStorage under user's specific key
+  useEffect(() => {
+    if (user?.id && conversations && conversations.length > 0) {
+      const key = getStorageKey(user.id);
+      localStorage.setItem(key, JSON.stringify(conversations));
+    }
+  }, [conversations, user?.id]);
 
   // Auth guard: If guest, redirect to login
   useEffect(() => {
@@ -174,7 +196,8 @@ export const DirectPage = () => {
           return c;
         })
       );
-      alert('메시지 또는 사진 전송에 실패했습니다. 다시 시도해주세요.');
+      setErrorToast('메시지 또는 사진 전송에 실패했습니다. 네트워크를 확인하고 다시 시도해주세요.');
+      setTimeout(() => setErrorToast(''), 4500);
     }
   };
 
@@ -313,6 +336,33 @@ export const DirectPage = () => {
         onClose={() => setIsNewMessageOpen(false)}
         onSelectUser={handleSelectUserFromModal}
       />
+
+      {/* Recoverable Error Toast Banner */}
+      {errorToast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '28px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: '#262626',
+            color: '#ffffff',
+            padding: '10px 20px',
+            borderRadius: '10px',
+            fontSize: '13.5px',
+            fontWeight: 500,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            animation: 'fadeIn 0.2s ease-out',
+          }}
+        >
+          <span style={{ color: '#ed4956', fontSize: '15px' }}>⚠️</span>
+          <span>{errorToast}</span>
+        </div>
+      )}
 
       <style>{`
         @media (max-width: 768px) {

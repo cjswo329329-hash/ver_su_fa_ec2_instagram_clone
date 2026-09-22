@@ -46,10 +46,11 @@ export const authApi = {
     return response.data;
   },
 
-  resetPassword: async (usernameOrEmail, newPassword) => {
+  resetPassword: async (usernameOrEmail, newPassword, resetToken) => {
     const response = await api.post('/auth/reset-password', {
       username_or_email: usernameOrEmail,
       new_password: newPassword,
+      reset_token: resetToken,
     });
     return response.data;
   },

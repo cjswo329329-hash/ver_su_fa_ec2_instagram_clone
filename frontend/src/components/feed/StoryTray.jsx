@@ -1,5 +1,4 @@
-import React, { useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useModal } from '../../contexts/ModalContext';
@@ -8,10 +7,34 @@ import { Avatar } from '../common/Avatar';
 
 export const StoryTray = () => {
   const { user } = useAuth();
-  const { stories, openStoryViewer } = useModal();
+  const { stories, openStoryViewer, openCreateStory } = useModal();
   const { requireAuth } = useAuthGuard();
   const scrollRef = useRef(null);
-  const navigate = useNavigate();
+
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  // 스크롤 좌우 여유분 검사
+  const checkScroll = useCallback(() => {
+    if (scrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
+      setCanScrollLeft(scrollLeft > 4);
+      setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkScroll();
+    const el = scrollRef.current;
+    if (el) {
+      el.addEventListener('scroll', checkScroll, { passive: true });
+      window.addEventListener('resize', checkScroll);
+    }
+    return () => {
+      if (el) el.removeEventListener('scroll', checkScroll);
+      window.removeEventListener('resize', checkScroll);
+    };
+  }, [checkScroll, stories]);
 
   const handleScroll = (direction) => {
     if (scrollRef.current) {
@@ -31,11 +54,13 @@ export const StoryTray = () => {
          (s.username && user?.username && s.username === user.username)
   );
 
-  // 2. 다른 사람들의 스토리 목록 (현재 로그인한 유저 본인은 반드시 제외하여 중복 방지!)
+  // 2. 다른 사람들의 스토리 목록 (현재 로그인한 유저 본인은 제외하여 중복 방지)
   const otherStories = stories.filter(
     s => !( (s.userId && user?.id && String(s.userId) === String(user.id)) ||
             (s.username && user?.username && s.username === user.username) )
   );
+
+  const hasMyStories = Boolean(myStoryItem && myStoryItem.stories?.length > 0);
 
   return (
     <div
@@ -50,28 +75,33 @@ export const StoryTray = () => {
       className="story-tray-wrapper"
     >
       {/* Scroll Left Button */}
-      <button
-        onClick={() => handleScroll('left')}
-        style={{
-          position: 'absolute',
-          left: '8px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          backgroundColor: '#ffffff',
-          borderRadius: '50%',
-          width: '28px',
-          height: '28px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-          zIndex: 10,
-          color: '#333333',
-        }}
-        className="story-nav-btn"
-      >
-        <ChevronLeft size={18} />
-      </button>
+      {canScrollLeft && (
+        <button
+          onClick={() => handleScroll('left')}
+          style={{
+            position: 'absolute',
+            left: '8px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            backgroundColor: '#ffffff',
+            borderRadius: '50%',
+            width: '28px',
+            height: '28px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
+            zIndex: 10,
+            color: '#333333',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+          className="story-nav-btn"
+          aria-label="이전 스토리 보기"
+        >
+          <ChevronLeft size={18} />
+        </button>
+      )}
 
       {/* Horizontal Tray */}
       <div
@@ -85,7 +115,7 @@ export const StoryTray = () => {
         }}
         className="no-scrollbar"
       >
-        {/* 1. 맨 앞: 내 스토리 (오직 1개만 렌더링!) */}
+        {/* 1. 맨 앞: 내 스토리 */}
         <div
           style={{
             display: 'flex',
@@ -97,18 +127,20 @@ export const StoryTray = () => {
             width: '66px',
           }}
           onClick={() => {
-            if (myStoryItem && myStoryItem.stories?.length > 0) {
+            if (hasMyStories) {
               openStoryViewer(myStoryItem);
             } else {
-              alert("스토리 추가 기능: 내 스토리에 새로운 일상을 공유해보세요!");
+              openCreateStory();
             }
           }}
+          title={hasMyStories ? '내 스토리 보기' : '스토리 만들기'}
         >
           <Avatar
             src={user?.profile_image_url}
             size="lg"
-            isAddable={!myStoryItem || !myStoryItem.stories?.length}
-            hasStory={Boolean(myStoryItem && myStoryItem.stories?.length > 0)}
+            isAddable={true}
+            onAddClick={() => openCreateStory()}
+            hasStory={hasMyStories}
             isStoryViewed={Boolean(myStoryItem && !myStoryItem.hasUnseen)}
             alt="내 스토리"
           />
@@ -127,7 +159,7 @@ export const StoryTray = () => {
           </span>
         </div>
 
-        {/* 2. 그 뒤: 팔로우 및 다른 유저들의 스토리 (본인 제외 & 각자의 고유 사진 노출) */}
+        {/* 2. 그 뒤: 팔로우 및 다른 유저들의 스토리 */}
         {otherStories.map((storyItem) => (
           <div
             key={storyItem.userId || storyItem.username}
@@ -149,6 +181,7 @@ export const StoryTray = () => {
                 description: 'Instagram에 로그인하여 크리에이터들의 24시간 스토리를 확인하세요.'
               });
             }}
+            title={`${storyItem.username}님의 스토리 보기`}
           >
             <Avatar
               src={storyItem.profileImage}
@@ -175,28 +208,33 @@ export const StoryTray = () => {
       </div>
 
       {/* Scroll Right Button */}
-      <button
-        onClick={() => handleScroll('right')}
-        style={{
-          position: 'absolute',
-          right: '8px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          backgroundColor: '#ffffff',
-          borderRadius: '50%',
-          width: '28px',
-          height: '28px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-          zIndex: 10,
-          color: '#333333',
-        }}
-        className="story-nav-btn"
-      >
-        <ChevronRight size={18} />
-      </button>
+      {canScrollRight && (
+        <button
+          onClick={() => handleScroll('right')}
+          style={{
+            position: 'absolute',
+            right: '8px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            backgroundColor: '#ffffff',
+            borderRadius: '50%',
+            width: '28px',
+            height: '28px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
+            zIndex: 10,
+            color: '#333333',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+          className="story-nav-btn"
+          aria-label="다음 스토리 보기"
+        >
+          <ChevronRight size={18} />
+        </button>
+      )}
 
       <style>{`
         @media (max-width: 768px) {

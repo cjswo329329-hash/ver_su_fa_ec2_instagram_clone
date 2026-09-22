@@ -162,6 +162,24 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('ig_current_user');
     localStorage.removeItem('ig_posts');
+    localStorage.removeItem('ig_stories');
+    localStorage.removeItem('ig_direct_conversations_v2');
+    localStorage.removeItem('ig_direct_conversations_guest');
+
+    // 사용자의 1:1 대화 캐시 완전 초기화 (프라이버시 보호 및 계정 전환 시 격리)
+    if (user?.id) {
+      localStorage.removeItem(`ig_direct_conversations_${user.id}`);
+    }
+    try {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('ig_direct_conversations_')) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (e) {
+      // Silently handle storage iteration errors
+    }
+
     setUser(null);
   };
 

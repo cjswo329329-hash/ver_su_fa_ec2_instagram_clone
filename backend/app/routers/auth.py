@@ -8,10 +8,18 @@ from app.schemas.auth import (
     LoginRequest,
     PasswordChangeRequest,
     VerifyAccountRequest,
+    VerifyAccountResponse,
     PasswordResetRequest,
 )
 from app.schemas.user import UserCreate, UserSimple
-from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token
+from app.core.security import (
+    verify_password,
+    get_password_hash,
+    create_access_token,
+    create_refresh_token,
+    create_password_reset_token,
+    decode_token,
+)
 from app.core.deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -114,7 +122,7 @@ def change_password(
     db.commit()
     return {"message": "비밀번호가 성공적으로 변경되었습니다.", "success": True}
 
-@router.post("/verify-account")
+@router.post("/verify-account", response_model=VerifyAccountResponse)
 def verify_account(req: VerifyAccountRequest, db: Session = Depends(get_db)):
     identifier = req.username_or_email.strip() if req.username_or_email else ""
     if not identifier:
@@ -124,6 +132,16 @@ def verify_account(req: VerifyAccountRequest, db: Session = Depends(get_db)):
     ).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="입력하신 정보와 일치하는 계정을 찾을 수 없습니다.")
+
+    # 관리자 계정은 웹 비밀번호 재설정 페이지를 통한 초기화 원천 차단
+    if getattr(user, "is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 계정은 보안 정책상 웹 재설정이 불가능합니다. 시스템 관리자에게 문의하세요."
+        )
+
+    # 1회용 단기 유효(10분) 비밀번호 재설정 암호화 토큰 발급
+    reset_token = create_password_reset_token(user.id)
 
     # 마스킹 이메일 생성 (예: al***@domain.com)
     email = user.email or ""
@@ -135,13 +153,14 @@ def verify_account(req: VerifyAccountRequest, db: Session = Depends(get_db)):
     else:
         masked_email = "***"
 
-    return {
-        "exists": True,
-        "username": user.username,
-        "email": masked_email,
-        "full_name": user.full_name,
-        "profile_image_url": user.profile_image_url,
-    }
+    return VerifyAccountResponse(
+        exists=True,
+        username=user.username,
+        email=masked_email,
+        full_name=user.full_name,
+        profile_image_url=user.profile_image_url,
+        reset_token=reset_token
+    )
 
 @router.post("/reset-password")
 def reset_password(req: PasswordResetRequest, db: Session = Depends(get_db)):
@@ -153,11 +172,41 @@ def reset_password(req: PasswordResetRequest, db: Session = Depends(get_db)):
     if len(new_pwd) < 6:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="새 비밀번호는 6자 이상이어야 합니다.")
 
+    # 비밀번호 재설정 암호화 서명 토큰 검증 (무인증 탈취 원천 차단)
+    if not req.reset_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="비밀번호 재설정 인증 토큰이 필요합니다. 계정 확인 단계를 먼저 진행해주세요."
+        )
+
+    payload = decode_token(req.reset_token)
+    if not payload or payload.get("type") != "password_reset":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않거나 만료된 재설정 토큰입니다. 다시 시도해주세요."
+        )
+
+    token_user_id = payload.get("sub")
     user = db.query(User).filter(
         (User.username == identifier) | (User.email == identifier)
     ).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="입력하신 정보와 일치하는 계정을 찾을 수 없습니다.")
+    if not user or str(user.id) != str(token_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="토큰의 계정 정보와 일치하지 않습니다."
+        )
+
+    if getattr(user, "is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 계정은 웹 재설정이 불가능합니다."
+        )
+
+    if verify_password(new_pwd, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="새 비밀번호는 이전 비밀번호와 달라야 합니다."
+        )
 
     user.hashed_password = get_password_hash(new_pwd)
     db.commit()

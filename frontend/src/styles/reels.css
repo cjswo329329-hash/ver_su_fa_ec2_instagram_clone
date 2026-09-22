@@ -54,12 +54,12 @@
   padding: 0 8px;
 }
 
-/* Desktop Left Meta Info (>= 1024px) */
+/* Desktop Left Meta Info (>= 1024px) - Exactly matching official Instagram layout */
 .reel-desktop-meta {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  width: 280px;
+  width: 260px;
   padding-right: 24px;
   padding-bottom: 12px;
   text-align: left;
@@ -169,10 +169,11 @@
   transition: width 0.1s linear;
 }
 
-/* Mobile Bottom Overlay (< 1024px) */
+/* In-Video Bottom Overlay (Mobile Only < 1024px) */
 .reel-mobile-overlay {
   display: none;
 }
+
 @media (max-width: 1023px) {
   .reel-mobile-overlay {
     display: block;
@@ -182,6 +183,7 @@
     right: 0;
     padding: 16px;
     padding-bottom: 20px;
+    padding-right: 64px;
     background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.4) 70%, transparent 100%);
     color: #ffffff;
     z-index: 20;
@@ -269,11 +271,11 @@
   background-color: rgba(255, 255, 255, 0.12);
 }
 
-/* Desktop & Mobile Comments Box Integration (Exact Match to Screenshot) */
+/* Desktop Comments Box: positioned right next to action sidebar, bottom-aligned with video/actions (Exact Match to User Screenshot) */
 .reel-desktop-comments-wrapper {
-  margin-left: 16px;
-  margin-bottom: 8px;
-  flex-shrink: 0;
+  position: absolute;
+  left: calc(100% + 16px);
+  bottom: 0;
   z-index: 40;
   animation: commentBoxSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
@@ -282,6 +284,27 @@
   .reel-desktop-comments-wrapper {
     display: none !important;
   }
+}
+
+/* Custom Comments Scrollbar (visible smooth rounded scrollbar from screenshot) */
+.custom-comments-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-comments-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-comments-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+}
+.custom-comments-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.4);
+}
+[data-theme='dark'] .custom-comments-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.3);
+}
+[data-theme='dark'] .custom-comments-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.5);
 }
 
 @media (max-width: 1279px) {

@@ -8,6 +8,7 @@ import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useModal } from '../../contexts/ModalContext';
 import { FollowersModal } from './FollowersModal';
 import { ProfileOptionsModal } from './ProfileOptionsModal';
+import { OtherUserOptionsModal } from './OtherUserOptionsModal';
 import { ProfileQRCodeModal } from './ProfileQRCodeModal';
 import { ChangeAvatarModal } from './ChangeAvatarModal';
 import { followApi, userApi } from '../../services';
@@ -42,6 +43,7 @@ export const ProfileHeader = ({ profileUser, isMe = true, onProfileRefresh }) =>
   const [isFollowersModalOpen, setIsFollowersModalOpen] = useState(false);
   const [followersModalTab, setFollowersModalTab] = useState('followers');
   const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
+  const [isOtherUserOptionsOpen, setIsOtherUserOptionsOpen] = useState(false);
   const [isQRCodeModalOpen, setIsQRCodeModalOpen] = useState(false);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
 
@@ -373,12 +375,13 @@ export const ProfileHeader = ({ profileUser, isMe = true, onProfileRefresh }) =>
                   <UserPlus size={16} />
                 </button>
                 <button
-                  onClick={() => setIsOptionsModalOpen(true)}
+                  onClick={() => setIsOtherUserOptionsOpen(true)}
                   style={{
                     color: 'var(--text-primary)',
                     padding: '6px',
                     cursor: 'pointer',
                   }}
+                  title="옵션 더 보기"
                 >
                   <MoreHorizontal size={20} />
                 </button>
@@ -896,11 +899,18 @@ export const ProfileHeader = ({ profileUser, isMe = true, onProfileRefresh }) =>
         onFollowChange={handleModalFollowChange}
       />
 
-      {/* Profile Options Modal (Gear Icon) */}
+      {/* Profile Options Modal (Gear Icon for Me) */}
       <ProfileOptionsModal
         isOpen={isOptionsModalOpen}
         onClose={() => setIsOptionsModalOpen(false)}
         onOpenQRCode={() => setIsQRCodeModalOpen(true)}
+      />
+
+      {/* Other User Options Modal (More Horizontal for Others) */}
+      <OtherUserOptionsModal
+        isOpen={isOtherUserOptionsOpen}
+        onClose={() => setIsOtherUserOptionsOpen(false)}
+        profileUser={profileUser}
       />
 
       {/* Profile QR Code Modal */}

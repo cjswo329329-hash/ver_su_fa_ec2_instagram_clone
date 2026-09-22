@@ -17,6 +17,7 @@ export const Avatar = ({
   hasStory = false,
   isStoryViewed = false,
   isAddable = false,
+  onAddClick,
   onClick,
   className = ""
 }) => {
@@ -68,6 +69,12 @@ export const Avatar = ({
 
       {isAddable && (
         <div
+          onClick={(e) => {
+            if (onAddClick) {
+              e.stopPropagation();
+              onAddClick(e);
+            }
+          }}
           style={{
             position: 'absolute',
             bottom: 0,
@@ -80,8 +87,11 @@ export const Avatar = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            border: '2px solid var(--bg-primary)'
+            border: '2px solid var(--bg-primary)',
+            cursor: 'pointer',
+            transition: 'transform 0.15s ease',
           }}
+          title="스토리 추가"
         >
           <Plus size={size === 'xl' || size === 'lg' ? 16 : 12} strokeWidth={3} />
         </div>

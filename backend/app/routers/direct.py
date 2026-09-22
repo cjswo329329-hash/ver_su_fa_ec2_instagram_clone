@@ -13,7 +13,7 @@ from app.schemas.direct import (
     ReactionToggleRequest, PartnerProfile
 )
 from app.core.deps import get_current_user
-from app.routers.posts import format_time_ago
+from app.core.utils import format_time_ago
 
 router = APIRouter(prefix="/direct", tags=["Direct"])
 

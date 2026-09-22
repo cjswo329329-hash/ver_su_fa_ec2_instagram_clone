@@ -7,7 +7,7 @@ import { MediaCarousel } from '../feed/MediaCarousel';
 import { PostActions } from '../feed/PostActions';
 import { useModal } from '../../contexts/ModalContext';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
-import { postApi, followApi } from '../../services';
+import { postApi, followApi, reelApi } from '../../services';
 
 export const PostDetailModal = () => {
   const {
@@ -33,6 +33,13 @@ export const PostDetailModal = () => {
   const inputRef = useRef(null);
 
   const post = activePostDetail;
+
+  const isReel = Boolean(
+    post?.isVideo ||
+    post?.is_video ||
+    post?.category === 'reel' ||
+    post?.media?.[0]?.media_type === 'video'
+  );
 
   // Sync author follow status
   useEffect(() => {
@@ -74,10 +81,19 @@ export const PostDetailModal = () => {
     navigate(`/${targetUsername}`);
   };
 
-  // 댓글 및 대댓글 실시간 로드
-  const loadComments = async (postId) => {
+  // 댓글 및 대댓글 실시간 로드 (릴스 vs 일반 포스트 분기)
+  const loadComments = async (targetPost) => {
+    if (!targetPost?.id) return;
+    const isVideoReel = Boolean(
+      targetPost.isVideo ||
+      targetPost.is_video ||
+      targetPost.category === 'reel' ||
+      targetPost.media?.[0]?.media_type === 'video'
+    );
     try {
-      const data = await postApi.getComments(postId);
+      const data = isVideoReel
+        ? await reelApi.getReelComments(targetPost.id)
+        : await postApi.getComments(targetPost.id);
       if (Array.isArray(data)) {
         setCommentsList(data);
       }
@@ -87,15 +103,43 @@ export const PostDetailModal = () => {
   };
 
   useEffect(() => {
-    if (!post?.id) {
-      setCommentsList([]);
-      setReplyingTo(null);
-      setExpandedReplies(new Set());
-      return;
-    }
+    // 새 게시물이 열리거나 전환될 때 이전 게시물의 댓글 잔존 및 증발 현상 방지
+    const initialComments = Array.isArray(post?.comments) ? post.comments : [];
+    setCommentsList(initialComments);
+    setReplyingTo(null);
+    setExpandedReplies(new Set());
 
-    loadComments(post.id);
-  }, [post?.id]);
+    if (!post?.id) return;
+
+    let isCancelled = false;
+    const isVideoReel = Boolean(
+      post.isVideo ||
+      post.is_video ||
+      post.category === 'reel' ||
+      post.media?.[0]?.media_type === 'video'
+    );
+
+    const fetchComments = async () => {
+      try {
+        const data = isVideoReel
+          ? await reelApi.getReelComments(post.id)
+          : await postApi.getComments(post.id);
+        if (!isCancelled && Array.isArray(data)) {
+          setCommentsList(data);
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          console.error('Failed to load comments:', err);
+        }
+      }
+    };
+
+    fetchComments();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [post?.id, post?.isVideo, post?.is_video]);
 
   if (!activePostDetail) return null;
 
@@ -166,28 +210,105 @@ export const PostDetailModal = () => {
       const trimmed = commentText.trim();
       if (!trimmed || submitting) return;
 
-      setSubmitting(true);
       const parentId = replyingTo ? replyingTo.commentId : null;
 
-      try {
-        await addCommentToPost(post.id, user, trimmed, parentId);
-        setCommentText('');
-        setReplyingTo(null);
+      // 1. 즉시(0ms) 입력창 초기화 및 답글 배너 해제 (즉각 반응)
+      setCommentText('');
+      setReplyingTo(null);
+      if (parentId) {
+        setExpandedReplies(prev => new Set(prev).add(parentId));
+      }
 
-        // 최신 댓글 트리 새로고침
-        await loadComments(post.id);
+      // 2. 즉시(0ms) 낙관적 UI(Optimistic Update)로 댓글 목록에 바로 렌더링
+      const tempId = Date.now();
+      const optimisticComment = {
+        id: tempId,
+        content: trimmed,
+        text: trimmed,
+        created_at: new Date().toISOString(),
+        timeAgo: '방금 전',
+        likes_count: 0,
+        is_liked: false,
+        parent_id: parentId,
+        author: {
+          id: user?.id,
+          username: user?.username || 'me',
+          profile_image_url: user?.profile_image_url || user?.profileImageUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
+          profileImageUrl: user?.profile_image_url || user?.profileImageUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
+        },
+        username: user?.username || 'me',
+        replies: [],
+        replies_count: 0,
+      };
 
-        // 대댓글을 달았다면 해당 부모 댓글의 답글 목록 자동 펼치기
+      setCommentsList(prev => {
         if (parentId) {
-          setExpandedReplies(prev => new Set(prev).add(parentId));
+          return prev.map(c => {
+            if (c.id === parentId) {
+              const prevReplies = c.replies || [];
+              return {
+                ...c,
+                replies_count: (c.replies_count || prevReplies.length) + 1,
+                replies: [...prevReplies, optimisticComment]
+              };
+            }
+            return c;
+          });
+        }
+        return [...prev, optimisticComment];
+      });
+
+      // 3. 백엔드 비동기 통신
+      setSubmitting(true);
+      try {
+        const savedComment = await addCommentToPost(post.id, user, trimmed, parentId, isReel);
+        if (savedComment?.id) {
+          // 서버에서 발급된 실제 ID로 매끄럽게 교체
+          setCommentsList(prev => {
+            if (parentId) {
+              return prev.map(c => {
+                if (c.id === parentId) {
+                  return {
+                    ...c,
+                    replies: (c.replies || []).map(r => r.id === tempId ? { ...r, id: savedComment.id } : r)
+                  };
+                }
+                return c;
+              });
+            }
+            return prev.map(c => c.id === tempId ? { ...c, id: savedComment.id } : c);
+          });
         }
       } catch (err) {
         console.error('Comment submit error:', err);
+        // 실패 시 롤백 및 입력 텍스트 복구
+        setCommentsList(prev => {
+          if (parentId) {
+            return prev.map(c => {
+              if (c.id === parentId) {
+                return {
+                  ...c,
+                  replies_count: Math.max(0, (c.replies_count || 1) - 1),
+                  replies: (c.replies || []).filter(r => r.id !== tempId)
+                };
+              }
+              return c;
+            });
+          }
+          return prev.filter(c => c.id !== tempId);
+        });
+        setCommentText(trimmed);
       } finally {
         setSubmitting(false);
       }
     }, { actionType: 'comment' });
   };
+
+  // 최상위 댓글 + 대댓글 전체 합산 개수 (백엔드 카운트와 100% 일치 보장)
+  const totalCommentsCount = commentsList.reduce((acc, c) => {
+    const repCount = c.replies?.length ?? c.replies_count ?? 0;
+    return acc + 1 + repCount;
+  }, 0);
 
   return (
     <Modal
@@ -563,16 +684,14 @@ export const PostDetailModal = () => {
           {/* Action Bar & Stats */}
           <div style={{ borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }}>
             <PostActions
-              isLiked={post.isLiked}
-              isBookmarked={post.isBookmarked}
-              likesCount={post.likesCount}
-              commentsCount={post.commentsCount ?? (commentsList?.length || post.comments?.length || 0)}
+              isLiked={post.isLiked ?? post.is_liked ?? false}
+              isBookmarked={post.isBookmarked ?? post.is_bookmarked ?? false}
+              likesCount={post.likesCount ?? post.likes_count ?? 0}
+              commentsCount={commentsList.length > 0 ? totalCommentsCount : (post.commentsCount ?? post.comments_count ?? 0)}
               showCounts={true}
               onLike={() => requireAuth(() => toggleLikePost(post.id), { actionType: 'like' })}
-              onComment={() => {
-                if (inputRef.current) inputRef.current.focus();
-              }}
-              onBookmark={() => requireAuth(() => toggleBookmarkPost(post.id), { actionType: 'bookmark' })}
+              onComment={() => inputRef.current?.focus()}
+              onBookmark={() => requireAuth(() => toggleBookmarkPost(post.id, isReel), { actionType: 'bookmark' })}
             />
 
             <div style={{ padding: '0 16px 10px 16px' }}>

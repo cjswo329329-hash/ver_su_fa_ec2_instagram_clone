@@ -4,11 +4,12 @@ export const reelApi = {
   getReels: async (optsOrLimit = 20, legacyCursor = null) => {
     let params;
     if (typeof optsOrLimit === 'object' && optsOrLimit !== null) {
-      const { limit = 20, offset = 0, seed = null, cursor = null, exclude_ids = null } = optsOrLimit;
+      const { limit = 20, offset = 0, seed = null, cursor = null, exclude_ids = null, refresh = false } = optsOrLimit;
       params = { limit, offset };
       if (seed !== null && seed !== undefined) params.seed = seed;
       if (cursor) params.cursor = cursor;
       if (exclude_ids) params.exclude_ids = exclude_ids;
+      if (refresh) params.refresh = true;
     } else {
       params = { limit: optsOrLimit };
       if (legacyCursor) params.cursor = legacyCursor;

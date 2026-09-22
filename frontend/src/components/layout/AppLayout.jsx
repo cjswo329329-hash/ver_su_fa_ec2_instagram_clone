@@ -5,6 +5,7 @@ import { MobileHeader } from './MobileHeader';
 import { MobileBottomBar } from './MobileBottomBar';
 import { CreatePostModal } from '../post-create/CreatePostModal';
 import { StoryViewerModal } from '../story-viewer/StoryViewerModal';
+import { CreateStoryModal } from '../story-viewer/CreateStoryModal';
 import { PostDetailModal } from '../post-detail/PostDetailModal';
 import { OptionsModal } from '../common/OptionsModal';
 import { NotificationsModal } from '../notifications/NotificationsModal';
@@ -64,6 +65,7 @@ export const AppLayout = () => {
       {/* Global Modals */}
       <CreatePostModal />
       <StoryViewerModal />
+      <CreateStoryModal />
       <PostDetailModal />
       <OptionsModal />
       <NotificationsModal isOpen={isNotificationsOpen} onClose={closeNotifications} />

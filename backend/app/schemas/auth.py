@@ -42,7 +42,16 @@ class PasswordChangeRequest(BaseModel):
 class VerifyAccountRequest(BaseModel):
     username_or_email: str
 
+class VerifyAccountResponse(BaseModel):
+    exists: bool
+    username: str
+    email: str
+    full_name: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    reset_token: str
+
 class PasswordResetRequest(BaseModel):
     username_or_email: str
     new_password: str
+    reset_token: str
 
