@@ -116,6 +116,7 @@ export function App() {
         />
         <Route path="p/:postId" element={<PostDetailPage />} />
         <Route path="post/:postId" element={<PostDetailPage />} />
+        <Route path="profile" element={<ProfilePage />} />
         <Route path="profile/:username" element={<ProfilePage />} />
         <Route path=":username" element={<ProfilePage />} />
         <Route path="*" element={<NotFoundPage />} />

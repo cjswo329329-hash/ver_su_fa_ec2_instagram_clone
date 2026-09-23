@@ -69,7 +69,8 @@ def record_content_view(
     db.commit()
     db.refresh(view)
 
-    if payload.not_interested or is_completed:
+    # 강력한 부정 피드백(관심 없음)일 때만 즉각 취향 프로필 캐시 무효화 (일반 완독 시 잦은 재연산 방지)
+    if payload.not_interested:
         try:
             from app.services.recommendation_service import invalidate_taste_profile
             invalidate_taste_profile(current_user.id)

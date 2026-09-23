@@ -36,6 +36,11 @@ export const Avatar = ({
         display: 'block'
       }}
       onError={(e) => {
+        if (src && src.startsWith('/uploads/') && !e.target.dataset.retried) {
+          e.target.dataset.retried = 'true';
+          e.target.src = `http://13.125.66.53:8000${src}`;
+          return;
+        }
         e.target.src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80";
       }}
     />

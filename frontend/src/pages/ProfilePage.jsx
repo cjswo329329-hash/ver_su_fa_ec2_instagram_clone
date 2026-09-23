@@ -21,13 +21,14 @@ export const ProfilePage = () => {
   // 탭 캐시: { posts: PostResponse[], saved: PostResponse[] }
   const [tabCache, setTabCache] = useState({ posts: null, saved: null });
 
-  let effectiveUsername = username || user?.username || 'alex_creator';
+  const isProfileRoot = !username || username === 'profile';
+  let effectiveUsername = isProfileRoot ? (user?.username || 'hong_james') : (username || user?.username || 'hong_james');
   try {
     effectiveUsername = decodeURIComponent(effectiveUsername);
   } catch (e) {
     // fallback to original
   }
-  const isMe = !username || (user && (username === user.username || effectiveUsername === user.username));
+  const isMe = isProfileRoot || (user && (username === user.username || effectiveUsername === user.username));
 
   // 유효한 탭만 허용 (타인 프로필에서는 저장됨 탭 차단)
   const allowedTabs = isMe ? ['posts', 'saved'] : ['posts'];
@@ -132,7 +133,7 @@ export const ProfilePage = () => {
   const currentTabPosts = tabCache[activeTab] || [];
 
   const displayedUser = profileUser
-    ? (isMe && user ? { ...user, ...profileUser } : profileUser)
+    ? (isMe && user ? { ...profileUser, ...user } : profileUser)
     : (isMe && user
         ? {
             ...user,

@@ -61,6 +61,7 @@ export default function ReelsCommentsBox({
   onClose,
   reel,
   onAddComment,
+  onSyncCommentCount,
   isMobile = false,
 }) {
   const { user } = useAuth();
@@ -130,6 +131,13 @@ export default function ReelsCommentsBox({
             const formatted = res.map(normalizeComment).filter(Boolean);
             setComments(formatted);
             _commentsCache.set(reel.id, formatted);
+            const actualTotal = formatted.reduce(
+              (acc, c) => acc + 1 + (c.repliesCount || c.replies?.length || 0),
+              0
+            );
+            if (onSyncCommentCount) {
+              onSyncCommentCount(actualTotal);
+            }
           }
         }
       } catch (err) {
@@ -235,6 +243,10 @@ export default function ReelsCommentsBox({
 
     if (onAddComment) {
       onAddComment(reel.id, newComment);
+    }
+
+    if (onSyncCommentCount) {
+      onSyncCommentCount(totalCommentsCount + 1);
     }
 
     // Scroll to top of comment list if top-level comment
@@ -472,6 +484,11 @@ export default function ReelsCommentsBox({
     0
   );
 
+  // 로딩 중이거나 아직 댓글 목록을 비동기 조회 중일 때는 reel.commentsCount를 폴백으로 노출하여 사이드바와 100% 일치시킴
+  const displayedCount = comments.length > 0 || !isLoading
+    ? totalCommentsCount
+    : (reel?.commentsCount ?? reel?.comments_count ?? 0);
+
   const boxContent = (
     <div
       ref={boxRef}
@@ -543,7 +560,7 @@ export default function ReelsCommentsBox({
             letterSpacing: '-0.2px',
           }}
         >
-          댓글{totalCommentsCount > 0 ? ` ${formatCount(totalCommentsCount)}` : ''}
+          댓글{displayedCount > 0 ? ` ${formatCount(displayedCount)}` : ''}
         </h3>
       </div>
 

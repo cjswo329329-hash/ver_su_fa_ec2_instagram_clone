@@ -1,6 +1,7 @@
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 from app.database import get_db
 from app.models.reel import Reel
@@ -33,7 +34,8 @@ def serialize_reel(
     reel: Reel,
     current_user: Optional[User] = None,
     db: Optional[Session] = None,
-    following_ids: Optional[set] = None
+    following_ids: Optional[set] = None,
+    comment_count_override: Optional[int] = None
 ) -> ReelResponse:
     is_liked = False
     is_bookmarked = False
@@ -67,17 +69,22 @@ def serialize_reel(
         cover_url=reel.audio_cover_url
     )
 
-    recent_comments = [
-        ReelComment(
-            id=c.id,
-            username=c.author.username,
-            profile_image_url=c.author.profile_image_url,
-            text=c.content,
-            time_ago=format_time_ago(c.created_at),
-            likes=0
-        )
-        for c in reel.comments[-10:]
-    ]
+    if comment_count_override is not None:
+        comments_count = comment_count_override
+        recent_comments = []
+    else:
+        comments_count = len(reel.comments) if reel.comments else 0
+        recent_comments = [
+            ReelComment(
+                id=c.id,
+                username=c.author.username,
+                profile_image_url=c.author.profile_image_url,
+                text=c.content,
+                time_ago=format_time_ago(c.created_at),
+                likes=0
+            )
+            for c in (reel.comments[-10:] if reel.comments else [])
+        ]
 
     video_url = reel.video_url
     if not video_url or "mixkit" in video_url or "test.mp4" in video_url:
@@ -95,7 +102,7 @@ def serialize_reel(
         audio=audio,
         likes_count=len(reel.likes),
         is_liked=is_liked,
-        comments_count=len(reel.comments),
+        comments_count=comments_count,
         shares_count=reel.shares_count,
         reposts_count=reel.reposts_count,
         is_bookmarked=is_bookmarked,
@@ -290,12 +297,19 @@ def get_reels(
             joinedload(Reel.author),
             selectinload(Reel.likes),
             selectinload(Reel.bookmarks),
-            selectinload(Reel.comments).joinedload(Comment.author),
         )
         .filter(Reel.id.in_(set(page_ids)))
     )
     reels_map = {r.id: r for r in reels_query.all()}
     reels = [reels_map[rid] for rid in page_ids if rid in reels_map]
+
+    # 10개 릴스의 정확한 댓글 수 1회 초고속 배치 집계 (전체 댓글 및 작성자 Eager Loading 완전 배제)
+    comment_counts = dict(
+        db.query(Comment.reel_id, func.count(Comment.id))
+        .filter(Comment.reel_id.in_(set(page_ids)))
+        .group_by(Comment.reel_id)
+        .all()
+    )
 
     # 작성자들에 대한 팔로우 여부 1회 배치 조회 (N+1 루프 쿼리 제거)
     following_author_ids = set()
@@ -309,7 +323,16 @@ def get_reels(
             ).all()
             following_author_ids = {row[0] for row in f_rows}
 
-    return [serialize_reel(r, current_user, db=None, following_ids=following_author_ids) for r in reels]
+    return [
+        serialize_reel(
+            r,
+            current_user,
+            db=None,
+            following_ids=following_author_ids,
+            comment_count_override=comment_counts.get(r.id, 0)
+        )
+        for r in reels
+    ]
 
 @router.get("/{reel_id}", response_model=ReelResponse)
 def get_reel_detail(

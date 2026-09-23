@@ -27,7 +27,7 @@ const FALLBACK_REELS = [
     audio: { title: 'Iron Beats - Heavy Lift', coverUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=800&auto=format&fit=crop&q=80' },
     likesCount: 12,
     isLiked: false,
-    commentsCount: 0,
+    commentsCount: 2,
     sharesCount: 157,
     repostsCount: 61,
     isBookmarked: false,
@@ -51,7 +51,7 @@ const FALLBACK_REELS = [
     audio: { title: 'Gym Motivation - No Pain No Gain', coverUrl: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&auto=format&fit=crop&q=80' },
     likesCount: 24,
     isLiked: false,
-    commentsCount: 0,
+    commentsCount: 2,
     sharesCount: 86,
     repostsCount: 52,
     isBookmarked: false,
@@ -75,7 +75,7 @@ const FALLBACK_REELS = [
     audio: { title: 'Golden Retriever - Happy Tail Wag', coverUrl: 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=800&auto=format&fit=crop&q=80' },
     likesCount: 38,
     isLiked: false,
-    commentsCount: 0,
+    commentsCount: 1,
     sharesCount: 51,
     repostsCount: 38,
     isBookmarked: false,
@@ -199,6 +199,51 @@ export default function ReelsPage() {
       window.removeEventListener('ig_reels_refresh', handleReelsRefreshEvent);
     };
   }, [refreshReels]);
+
+  // 전역 'ig_post_activity' 이벤트 구독 (댓글 등록, 좋아요 변경 등 실시간 반영)
+  useEffect(() => {
+    const handleActivity = (e) => {
+      const { postId, reelId, type, liked, likesCount, serverComment } = e.detail || {};
+      const targetReelId = reelId || postId;
+      if (!targetReelId) return;
+
+      setReels((prev) => {
+        let changed = false;
+        const updated = prev.map((r) => {
+          if (r.id === targetReelId) {
+            const nextReel = { ...r };
+            if (type === 'like' && liked !== undefined) {
+              changed = true;
+              nextReel.isLiked = liked;
+              if (likesCount !== undefined) {
+                nextReel.likesCount = likesCount;
+              } else {
+                nextReel.likesCount = Math.max(0, (nextReel.likesCount || 0) + (liked ? 1 : -1));
+              }
+            } else if (type === 'comment') {
+              changed = true;
+              const newCount = (nextReel.commentsCount ?? nextReel.comments_count ?? 0) + 1;
+              nextReel.commentsCount = newCount;
+              nextReel.comments_count = newCount;
+              if (serverComment) {
+                nextReel.comments = [serverComment, ...(nextReel.comments || [])];
+              }
+            }
+            return nextReel;
+          }
+          return r;
+        });
+        if (changed) {
+          _reelsCache.items = updated;
+          return updated;
+        }
+        return prev;
+      });
+    };
+
+    window.addEventListener('ig_post_activity', handleActivity);
+    return () => window.removeEventListener('ig_post_activity', handleActivity);
+  }, []);
 
   useEffect(() => {
     loadInitialReels();
@@ -497,6 +542,29 @@ export default function ReelsPage() {
     });
   }, []);
 
+  // Sync Comment Count from Comments Box
+  const handleSyncCommentCount = useCallback((reelId, count) => {
+    setReels((prev) => {
+      let changed = false;
+      const updated = prev.map((r) => {
+        if (r.id === reelId && (r.commentsCount !== count || r.comments_count !== count)) {
+          changed = true;
+          return {
+            ...r,
+            commentsCount: count,
+            comments_count: count,
+          };
+        }
+        return r;
+      });
+      if (changed) {
+        _reelsCache.items = updated;
+        return updated;
+      }
+      return prev;
+    });
+  }, []);
+
   const handleOpenComments = useCallback((r) => {
     setCommentReel((prev) => (prev?.id === r.id ? null : r));
   }, []);
@@ -695,6 +763,7 @@ export default function ReelsPage() {
                   isCommentsOpen={commentReel?.id === reel.id}
                   onCloseComments={() => setCommentReel(null)}
                   onAddComment={handleAddComment}
+                  onSyncCommentCount={handleSyncCommentCount}
                   onToggleBookmark={handleToggleBookmark}
                 />
               </div>

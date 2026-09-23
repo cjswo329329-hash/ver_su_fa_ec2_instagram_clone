@@ -121,11 +121,31 @@ async def upload_media(
     with open(file_path, "wb") as buffer:
         buffer.write(content)
 
-    media_url = (
-        f"{settings.PUBLIC_BASE_URL.rstrip('/')}/uploads/{cat_dir}/{unique_filename}"
-        if settings.PUBLIC_BASE_URL
-        else f"/uploads/{cat_dir}/{unique_filename}"
-    )
+    media_url = None
+    # 1순위: Supabase Storage 글로벌 CDN 업로드 (Vercel, EC2, 로컬 전역 호환)
+    if settings.SUPABASE_URL and settings.SUPABASE_KEY:
+        try:
+            from supabase import create_client
+            sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+            storage_path = f"{cat_dir}/{unique_filename}"
+            content_type = file.content_type or ("image/jpeg" if save_ext in [".jpg", ".jpeg"] else "application/octet-stream")
+            sb.storage.from_(settings.SUPABASE_BUCKET).upload(
+                path=storage_path,
+                file=content,
+                file_options={"content-type": content_type, "upsert": "true"}
+            )
+            media_url = sb.storage.from_(settings.SUPABASE_BUCKET).get_public_url(storage_path)
+        except Exception as upload_err:
+            print(f"[WARN] Supabase Storage 업로드 실패, 로컬 스토리지로 대체: {upload_err}")
+
+    # 2순위: 로컬 스토리지 상대 경로
+    if not media_url:
+        media_url = (
+            f"{settings.PUBLIC_BASE_URL.rstrip('/')}/uploads/{cat_dir}/{unique_filename}"
+            if settings.PUBLIC_BASE_URL
+            else f"/uploads/{cat_dir}/{unique_filename}"
+        )
+
     media_type = "video" if ext in VIDEO_EXTENSIONS else "image"
     return {
         "url": media_url,

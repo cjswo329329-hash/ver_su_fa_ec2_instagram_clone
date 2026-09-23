@@ -21,6 +21,7 @@ function ReelCard({
   isCommentsOpen = false,
   onCloseComments,
   onAddComment,
+  onSyncCommentCount,
   onToggleBookmark,
 }) {
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
@@ -245,6 +246,7 @@ function ReelCard({
               onClose={onCloseComments}
               reel={reel}
               onAddComment={onAddComment}
+              onSyncCommentCount={onSyncCommentCount}
               isMobile={false}
             />
           </div>
@@ -263,6 +265,7 @@ function ReelCard({
             onClose={onCloseComments}
             reel={reel}
             onAddComment={onAddComment}
+            onSyncCommentCount={onSyncCommentCount}
             isMobile={true}
           />
         </div>

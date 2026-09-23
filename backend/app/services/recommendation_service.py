@@ -31,6 +31,7 @@ from sqlalchemy import or_
 
 from app.models.user import User
 from app.models.post import Post
+from app.models.reel import Reel
 from app.models.like import Like
 from app.models.bookmark import Bookmark
 from app.models.comment import Comment
@@ -56,7 +57,7 @@ LAMBDA_DECAY = 0.099021
 
 # 취향 프로필 인메모리 캐시 (user_id -> (timestamp, profile_dict))
 _TASTE_PROFILE_CACHE: Dict[int, Tuple[float, Dict[str, Any]]] = {}
-TASTE_PROFILE_CACHE_TTL = 60.0  # 60초 유지
+TASTE_PROFILE_CACHE_TTL = 300.0  # 300초(5분) 유지로 EC2-DB 통신 대폭 절감
 
 
 def calculate_time_decay(action_time: datetime, now_dt: Optional[datetime] = None) -> float:
@@ -92,87 +93,155 @@ def get_user_taste_profile(user_id: int, db: Session, force_refresh: bool = Fals
     author_scores: Dict[int, float] = defaultdict(float)
     total_actions = 0
 
-    # 1. 북마크(Bookmarks) 분석 - Posts & Reels
-    user_bms = db.query(Bookmark).filter(Bookmark.user_id == user_id).all()
-    for bm in user_bms:
-        decay = calculate_time_decay(bm.created_at, now_dt)
+    # 1. 북마크(Bookmarks) 분석 - 1회 배치 JOIN 쿼리로 N+1 완벽 제거 (최근 50건)
+    bms = (
+        db.query(
+            Bookmark.created_at,
+            Bookmark.post_id,
+            Bookmark.reel_id,
+            Post.category.label("post_category"),
+            Post.user_id.label("post_author_id"),
+            Reel.category.label("reel_category"),
+            Reel.user_id.label("reel_author_id"),
+        )
+        .outerjoin(Post, Bookmark.post_id == Post.id)
+        .outerjoin(Reel, Bookmark.reel_id == Reel.id)
+        .filter(Bookmark.user_id == user_id)
+        .order_by(Bookmark.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    for b_created, p_id, r_id, p_cat, p_author, r_cat, r_author in bms:
+        decay = calculate_time_decay(b_created, now_dt)
         w = WEIGHT_BOOKMARK * decay
-        if bm.post_id and bm.post:
-            cat = bm.post.category or "tech"
+        if p_id:
+            cat = p_cat or "tech"
             category_scores[cat] += w
-            author_scores[bm.post.user_id] += w
+            if p_author:
+                author_scores[p_author] += w
             total_actions += 1
-        elif bm.reel_id and bm.reel:
-            cat = bm.reel.category or "tech"
+        elif r_id:
+            cat = r_cat or "tech"
             category_scores[cat] += w
-            author_scores[bm.reel.user_id] += w
+            if r_author:
+                author_scores[r_author] += w
             total_actions += 1
 
-    # 2. 좋아요(Likes) 분석 - Posts & Reels
-    user_likes = db.query(Like).filter(Like.user_id == user_id).all()
-    for lk in user_likes:
-        decay = calculate_time_decay(lk.created_at, now_dt)
+    # 2. 좋아요(Likes) 분석 - 1회 배치 JOIN 쿼리로 N+1 완벽 제거 (최근 50건)
+    likes = (
+        db.query(
+            Like.created_at,
+            Like.post_id,
+            Like.reel_id,
+            Post.category.label("post_category"),
+            Post.user_id.label("post_author_id"),
+            Reel.category.label("reel_category"),
+            Reel.user_id.label("reel_author_id"),
+        )
+        .outerjoin(Post, Like.post_id == Post.id)
+        .outerjoin(Reel, Like.reel_id == Reel.id)
+        .filter(Like.user_id == user_id)
+        .order_by(Like.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    for l_created, p_id, r_id, p_cat, p_author, r_cat, r_author in likes:
+        decay = calculate_time_decay(l_created, now_dt)
         w = WEIGHT_LIKE * decay
-        if lk.post_id and lk.post:
-            cat = lk.post.category or "tech"
+        if p_id:
+            cat = p_cat or "tech"
             category_scores[cat] += w
-            author_scores[lk.post.user_id] += w
+            if p_author:
+                author_scores[p_author] += w
             total_actions += 1
-        elif lk.reel_id and lk.reel:
-            cat = lk.reel.category or "tech"
+        elif r_id:
+            cat = r_cat or "tech"
             category_scores[cat] += w
-            author_scores[lk.reel.user_id] += w
+            if r_author:
+                author_scores[r_author] += w
             total_actions += 1
 
-    # 3. 댓글(Comments) 분석 - Posts & Reels
-    user_comments = db.query(Comment).filter(Comment.user_id == user_id).all()
-    for cm in user_comments:
-        decay = calculate_time_decay(cm.created_at, now_dt)
+    # 3. 댓글(Comments) 분석 - 1회 배치 JOIN 쿼리로 N+1 완벽 제거 (최근 50건)
+    comments = (
+        db.query(
+            Comment.created_at,
+            Comment.post_id,
+            Comment.reel_id,
+            Post.category.label("post_category"),
+            Post.user_id.label("post_author_id"),
+            Reel.category.label("reel_category"),
+            Reel.user_id.label("reel_author_id"),
+        )
+        .outerjoin(Post, Comment.post_id == Post.id)
+        .outerjoin(Reel, Comment.reel_id == Reel.id)
+        .filter(Comment.user_id == user_id)
+        .order_by(Comment.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    for c_created, p_id, r_id, p_cat, p_author, r_cat, r_author in comments:
+        decay = calculate_time_decay(c_created, now_dt)
         w = WEIGHT_COMMENT * decay
-        if cm.post_id and cm.post:
-            cat = cm.post.category or "tech"
+        if p_id:
+            cat = p_cat or "tech"
             category_scores[cat] += w
-            author_scores[cm.post.user_id] += w
+            if p_author:
+                author_scores[p_author] += w
             total_actions += 1
-        elif cm.reel_id and cm.reel:
-            cat = cm.reel.category or "tech"
+        elif r_id:
+            cat = r_cat or "tech"
             category_scores[cat] += w
-            author_scores[cm.reel.user_id] += w
+            if r_author:
+                author_scores[r_author] += w
             total_actions += 1
 
-    # 4. 시청/체류 및 부정 피드백(ContentViews) 분석
-    user_views = db.query(ContentView).filter(ContentView.user_id == user_id).all()
-    for cv in user_views:
-        decay = calculate_time_decay(cv.created_at, now_dt)
-        cat = None
-        author_id = None
-        if cv.post_id and cv.post:
-            cat = cv.post.category
-            author_id = cv.post.user_id
-        elif cv.reel_id and cv.reel:
-            cat = cv.reel.category
-            author_id = cv.reel.user_id
-
+    # 4. 시청/체류 및 부정 피드백(ContentViews) 분석 - 1회 배치 JOIN 쿼리 (최근 50건)
+    views = (
+        db.query(
+            ContentView.created_at,
+            ContentView.post_id,
+            ContentView.reel_id,
+            ContentView.completed,
+            ContentView.not_interested,
+            ContentView.duration_ms,
+            ContentView.watch_ratio,
+            Post.category.label("post_category"),
+            Post.user_id.label("post_author_id"),
+            Reel.category.label("reel_category"),
+            Reel.user_id.label("reel_author_id"),
+        )
+        .outerjoin(Post, ContentView.post_id == Post.id)
+        .outerjoin(Reel, ContentView.reel_id == Reel.id)
+        .filter(ContentView.user_id == user_id)
+        .order_by(ContentView.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    for v_created, p_id, r_id, completed, not_interested, duration_ms, watch_ratio, p_cat, p_author, r_cat, r_author in views:
+        decay = calculate_time_decay(v_created, now_dt)
+        cat = p_cat if p_id else (r_cat if r_id else None)
         if not cat:
             cat = "tech"
+        author_id = p_author if p_id else (r_author if r_id else None)
 
-        if cv.not_interested:
-            # 강력한 부정 피드백 감점
+        dur = duration_ms or 0
+        if not_interested:
             w = WEIGHT_NOT_INTERESTED * decay
             category_scores[cat] += w
             if author_id:
                 author_scores[author_id] += w
             total_actions += 1
-        elif cv.completed or cv.duration_ms >= 3000:
+        elif completed or dur >= 3000:
             w = WEIGHT_COMPLETED * decay
             category_scores[cat] += w
             if author_id:
                 author_scores[author_id] += w
             total_actions += 1
-        elif cv.duration_ms >= 1000:
+        elif dur >= 1000:
             w = WEIGHT_PARTIAL_VIEW * decay
             category_scores[cat] += w
             total_actions += 1
+
 
     # 5. 정규화 (Normalization)
     # 음수 점수는 0으로 클리핑 후 소프트맥스/L1 비율 계산
